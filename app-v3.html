@@ -883,6 +883,17 @@ function folhaAjustes(){
         </div>`).join("")}</div>
       <div class="tally tally--ok" id="a-total"></div>
     </div>
+    <div class="field">
+      <span class="label">Backup</span>
+      <p class="hint" style="margin:0 0 var(--s3)">Os dados ficam neste aparelho.
+        Baixe uma cópia de vez em quando, ou antes de trocar de celular.</p>
+      <div class="pair">
+        <button class="btn btn--ghost btn--sm" id="a-exp">Baixar cópia</button>
+        <button class="btn btn--ghost btn--sm" id="a-imp-btn">Restaurar</button>
+      </div>
+      <input type="file" id="a-imp" accept="application/json,.json" hidden>
+      <div class="status" id="a-bk" hidden></div>
+    </div>
     <div class="btn-row">
       <button class="btn btn--ghost" id="a-x">Cancelar</button>
       <button class="btn btn--primary" id="a-ok">Salvar</button>
@@ -893,6 +904,36 @@ function folhaAjustes(){
   };
   soma();
   $("a-plano").addEventListener("input",soma);
+  $("a-exp").addEventListener("click",()=>{
+    const b=new Blob([JSON.stringify({_formato:"casamento/1",
+      _em:new Date().toISOString(),estado:S},null,2)],{type:"application/json"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(b);
+    a.download=`casamento-${hoje()}.json`;
+    a.click();URL.revokeObjectURL(a.href);
+    $("a-bk").hidden=false;$("a-bk").className="status";
+    $("a-bk").innerHTML=`<span>Cópia baixada. Guarde num lugar que não seja só o celular.</span>`;
+  });
+  $("a-imp-btn").addEventListener("click",()=>$("a-imp").click());
+  $("a-imp").addEventListener("change",async e=>{
+    const f=e.target.files[0];if(!f)return;
+    const bk=$("a-bk");bk.hidden=false;bk.className="status";
+    try{
+      const j=JSON.parse(await f.text());
+      const novo=j.estado||j;
+      if(!novo?.evento?.data||!Array.isArray(novo.negs))
+        throw new Error("não parece um backup deste app");
+      // confirmação explícita: restaurar apaga o que existe hoje
+      const qtd=novo.negs.length;
+      if(!confirm(`Restaurar vai substituir tudo que está no aparelho por `
+        +`${qtd} orçamento${qtd===1?"":"s"} do backup. Continuar?`))return;
+      S=novo;S.negs.forEach(migrarParcelas);
+      await salvar();fechar();render();ir("home");
+    }catch(err){
+      bk.className="status status--err";
+      bk.innerHTML=`<span>Não consegui restaurar: ${esc(err.message)}</span>`;
+    }
+  });
   $("a-x").addEventListener("click",fechar);
   $("a-ok").addEventListener("click",async()=>{
     S.evento.data=$("a-data").value||S.evento.data;
@@ -929,6 +970,12 @@ BASE E ADICIONAIS:
   "2 horas extras (10%)", "4h extras de equipe".
 - Desconto é adicional NEGATIVO. Cortesia entra com valor 0.
 - "12x de R$ 2.400" não é o total. "R$ 28.800,00" é 28800.00.
+- Se houver tabela de preço por ANO (ex.: 2026 R$ 240, 2027 R$ 275), use o preço do
+  ano do casamento e registre o outro em ambiguidades.
+- "A partir de 100 convidados" é mínimo contratável, NÃO é a quantidade. quantidade
+  fica null a menos que o documento diga o número do evento.
+- Itens listados como OPCIONAIS não entram na base nem em adicionais. Cite-os em
+  ambiguidades, com preço, para o casal decidir.
 
 observacao_negociacao: sinal de espaço para negociar, em uma frase.
 ambiguidades: total que não bate, dígito sobrando, parcela após o casamento,
@@ -1174,6 +1221,36 @@ async function chamarModelo(partes){
   return JSON.parse(raw.slice(a,z+1));
 }
 
+/* ---------- leitura de PDF: texto no cliente, binário só se preciso ---------- */
+let pdfJS=null;
+function carregarPdfJS(){
+  if(pdfJS)return pdfJS;
+  pdfJS=new Promise((ok,erro)=>{
+    const t=document.createElement("script");
+    t.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    t.onload=()=>{
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc=
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      ok(window.pdfjsLib);
+    };
+    t.onerror=()=>erro(new Error("não consegui carregar o leitor de PDF"));
+    document.head.appendChild(t);
+  });
+  return pdfJS;
+}
+async function pdfParaTexto(file){
+  const lib=await carregarPdfJS();
+  const doc=await lib.getDocument({data:await file.arrayBuffer()}).promise;
+  let out=[];
+  for(let i=1;i<=doc.numPages;i++){
+    const p=await doc.getPage(i);
+    const t=await p.getTextContent();
+    const txt=t.items.map(x=>x.str).join(" ").replace(/\s+/g," ").trim();
+    if(txt)out.push(`--- página ${i} ---\n${txt}`);
+  }
+  return out.join("\n\n").slice(0,60000);
+}
+
 /* ---------- leitura de planilha: converte para texto antes de enviar ---------- */
 let sheetJS=null;
 function carregarSheetJS(){
@@ -1197,6 +1274,11 @@ async function planilhaParaTexto(file){
   ).join("\n\n").slice(0,60000);
 }
 
+const base64De=f=>new Promise((res,rej)=>{const r=new FileReader();
+  r.onload=()=>res(r.result.split(",")[1]);
+  r.onerror=()=>rej(new Error("não consegui abrir o arquivo"));
+  r.readAsDataURL(f)});
+
 async function importar(entrada,redesenhar,setAdds,setParcs){
   const st=$("imp-st");st.hidden=false;st.className="status";
   const ehTexto=typeof entrada==="string";
@@ -1212,12 +1294,23 @@ async function importar(entrada,redesenhar,setAdds,setParcs){
       partes=[{tipo:"texto",texto:await planilhaParaTexto(entrada)}];
     } else if(/\.(csv|tsv)$/i.test(entrada.name)||entrada.type.startsWith("text/")){
       partes=[{tipo:"texto",texto:(await entrada.text()).slice(0,60000)}];
+    } else if(/pdf$/i.test(entrada.type)||/\.pdf$/i.test(entrada.name)){
+      st.innerHTML=`<span class="spinner"></span><span>Lendo o texto do PDF…</span>`;
+      const txt=await pdfParaTexto(entrada);
+      if(txt.length>400){
+        // PDF com texto: manda só o texto. Resolve arquivo cheio de foto.
+        partes=[{tipo:"texto",texto:txt}];
+      } else {
+        // PDF digitalizado: precisa ir como imagem, e aí vale o limite de tamanho
+        if(entrada.size>3_000_000)
+          throw new Error("PDF escaneado e grande demais. Tire um print da página do preço");
+        st.innerHTML=`<span class="spinner"></span><span>PDF sem texto, enviando as páginas…</span>`;
+        partes=[{tipo:"arquivo",mime:"application/pdf",data:await base64De(entrada)}];
+      }
     } else {
-      const b64=await new Promise((res,rej)=>{const r=new FileReader();
-        r.onload=()=>res(r.result.split(",")[1]);
-        r.onerror=()=>rej(new Error("não consegui abrir o arquivo"));
-        r.readAsDataURL(entrada)});
-      partes=[{tipo:"arquivo",mime:entrada.type||"application/pdf",data:b64}];
+      if(entrada.size>3_000_000)
+        throw new Error("imagem grande demais; reduza ou tire um print só da parte do preço");
+      partes=[{tipo:"arquivo",mime:entrada.type||"application/pdf",data:await base64De(entrada)}];
     }
     const d=await chamarModelo(partes);
 
