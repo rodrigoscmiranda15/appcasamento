@@ -240,6 +240,11 @@
   .btn--primary:hover:not(:disabled){background:var(--ac-2)}
   .btn--ghost:hover:not(:disabled){background:var(--sf-2);color:var(--tx)}
 }
+.edit{background:none;border:0;padding:0 0 0 var(--s2);cursor:pointer;
+  font-size:var(--t-xs);font-weight:600;color:var(--ac);
+  transition:opacity var(--dur-fast) ease}
+.edit:hover{opacity:.7}
+.edit:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft);border-radius:var(--r-sm)}
 .link{background:none;border:0;padding:0;cursor:pointer;font-size:var(--t-sm);
   color:var(--tx-2);display:inline-flex;align-items:center;gap:var(--s1);
   margin-bottom:var(--s4);transition:color var(--dur-fast) ease}
@@ -344,6 +349,27 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;
   border-radius:var(--r-sm);transition:color var(--dur-fast) ease}
 .adds .add-row button:hover{color:var(--ov)}
 .adds .add-row button:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft)}
+.parc-row{display:grid;grid-template-columns:1fr 76px 34px 26px;gap:var(--s2);
+  align-items:center;margin-bottom:var(--s2)}
+.parc-row input{padding:var(--s2);font-size:var(--t-xs)}
+.parc-row>button{background:none;border:0;color:var(--tx-3);cursor:pointer;
+  border-radius:var(--r-sm);padding:var(--s1);
+  transition:color var(--dur-fast) ease,background-color var(--dur-fast) ease}
+.parc-row>button:hover{color:var(--ov)}
+.parc-row>button:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft)}
+.parc-row .unit{font-size:11px;font-weight:600;border:1px solid var(--line-2);
+  color:var(--tx-2);background:var(--sf)}
+.parc-row .unit--pct{background:var(--ac-soft);color:var(--ac);border-color:var(--ac-line)}
+.parc-row .unit:hover{color:var(--ac)}
+.parc-eq{grid-column:1/-1;font-size:11px;color:var(--tx-3);text-align:right;
+  font-variant-numeric:tabular-nums;margin-top:-4px}
+.gen{display:flex;align-items:center;gap:var(--s2);margin-top:var(--s2)}
+.gen-sep{font-size:var(--t-xs);color:var(--tx-3)}
+.gen input{width:52px;padding:var(--s2);font-size:var(--t-xs);text-align:center}
+.tally{display:flex;justify-content:space-between;gap:var(--s3);margin-top:var(--s3);
+  padding-top:var(--s3);border-top:1px solid var(--line);font-size:var(--t-xs);
+  font-variant-numeric:tabular-nums;color:var(--ov);font-weight:600}
+.tally--ok{color:var(--ac)}
 .plan-row{display:grid;grid-template-columns:1fr 112px;gap:var(--s2);margin-bottom:var(--s2)}
 .plan-row input:first-child{border-color:transparent;background:transparent;
   padding-left:0;font-weight:600}
@@ -432,6 +458,7 @@ async function iniciar(){
   try{const r=await window.storage.get(KEY);if(r&&r.value)S=JSON.parse(r.value)}catch(e){}
   await new Promise(r=>setTimeout(r,260));           // evita flash do esqueleto
   if(!S){onboarding();return}
+  S.negs.forEach(migrarParcelas);
   $("nav").hidden=false;$("fab").hidden=false;render();ir("home");
 }
 function esqueleto(){
@@ -462,20 +489,35 @@ function projecao(){
 }
 
 function parcelasDe(n){
+  const tot=totalNeg(n);
+  return (n.parcelas||[]).map(p=>({
+    ...p,
+    valor: p.pct!=null && p.pct!=="" ? tot*(+p.pct)/100 : (+p.valor||0)
+  })).sort((a,b)=>(a.data||"").localeCompare(b.data||""));
+}
+// migra o formato antigo (entrada + N mensais) para linhas editáveis
+function migrarParcelas(n){
+  if(n.parcelas)return;
   const p=n.pag||{},tot=totalNeg(n),out=[];
-  if(!p.dataEntrada)return out;
-  const ent=p.entrada||(p.entradaPct?tot*p.entradaPct/100:0);
-  if(ent>0)out.push({rot:"Entrada",data:p.dataEntrada,valor:ent});
-  const k=p.parcelas||0,resto=tot-ent;
-  if(k>0&&resto>0){
-    const v=resto/k,[y,m,d]=p.dataEntrada.split("-").map(Number);
-    for(let i=1;i<=k;i++)
-      out.push({rot:`${i} de ${k}`,data:new Date(Date.UTC(y,m-1+i,d)).toISOString().slice(0,10),valor:v});
+  if(p.dataEntrada){
+    const ent=p.entrada||(p.entradaPct?tot*p.entradaPct/100:0);
+    if(ent>0)out.push({id:uid(),rot:"Entrada",data:p.dataEntrada,
+      valor:p.entradaPct?null:ent,pct:p.entradaPct??null});
+    const k=p.parcelas||0,resto=tot-ent;
+    if(k>0&&resto>0){
+      const [y,m,d]=p.dataEntrada.split("-").map(Number);
+      for(let i=1;i<=k;i++)out.push({id:uid(),rot:"",
+        data:new Date(Date.UTC(y,m-1+i,d)).toISOString().slice(0,10),valor:resto/k,pct:null});
+    }
   }
-  return out;
+  n.parcelas=out;
+  // pagos migram de índice para id
+  if(Array.isArray(n.pagos)&&n.pagos.length&&typeof n.pagos[0]==="number")
+    n.pagos=n.pagos.map(i=>out[i]?.id).filter(Boolean);
+  delete n.pag;
 }
 const todasParcelas=()=>S.negs.filter(n=>n.estado==="fechado")
-  .flatMap(n=>parcelasDe(n).map((p,i)=>({...p,forn:n.forn,neg:n.id,idx:i,pago:(n.pagos||[]).includes(i)})));
+  .flatMap(n=>parcelasDe(n).map(p=>({...p,forn:n.forn,neg:n.id,pago:(n.pagos||[]).includes(p.id)})));
 const mesDe=d=>d.slice(0,7);
 const nomeMes=m=>new Date(m+"-02").toLocaleDateString("pt-BR",{month:"long",year:"numeric"});
 
@@ -578,7 +620,8 @@ function home(){
   $("s-home").innerHTML=`
     <div class="head">
       <div class="display">${dias>0?dias:0}<span style="font-size:var(--t-xl)"> dias</span></div>
-      <p class="sub">${dBR(S.evento.data)} · ${S.evento.convidados} convidados</p>
+      <p class="sub">${dBR(S.evento.data)} · ${S.evento.convidados} convidados
+        <button class="edit" id="home-cfg">ajustar</button></p>
     </div>
     ${!S.negs.length?vazioHome():`
     <div class="stagger">
@@ -624,6 +667,7 @@ function home(){
       </div>`:""}
     </div>`}`;
   if($("home-add"))$("home-add").addEventListener("click",()=>folha());
+  if($("home-cfg"))$("home-cfg").addEventListener("click",folhaAjustes);
 }
 const vazioHome=()=>`
   <div class="empty enter">
@@ -676,7 +720,13 @@ function abrirCat(id){
     <button class="link" id="volta">${ICON.back} Categorias</button>
     <div class="head">
       <h1 class="title">${esc(c.nome)}</h1>
-      <p class="sub">Planejado ${brl(c.valor)}${ns.length?` · ${ns.length} orçamento${ns.length>1?"s":""}`:""}</p>
+      <p class="sub">Planejado <span id="cat-plan-v">${brl(c.valor)}</span><button class="edit" id="cat-plan">ajustar</button>${ns.length?` · ${ns.length} orçamento${ns.length>1?"s":""}`:""}</p>
+      <div id="cat-plan-ed" hidden style="margin-top:var(--s3)">
+        <div class="pair">
+          <input type="number" id="cat-plan-in" value="${c.valor||""}" placeholder="R$ 0" aria-label="Valor planejado">
+          <button class="btn btn--primary btn--sm" id="cat-plan-ok">Salvar</button>
+        </div>
+      </div>
     </div>
     ${menor!=null?(menor>(c.valor||0)
       ?`<div class="note">Mesmo o mais barato fica <b>${brl(menor-(c.valor||0))} acima</b> do plano.</div>`
@@ -735,6 +785,14 @@ function abrirCat(id){
       Mais um orçamento em ${esc(c.nome)}</button>`:""}`;
 
   $("volta").addEventListener("click",()=>ir("cats"));
+  $("cat-plan").addEventListener("click",()=>{
+    const ed=$("cat-plan-ed");ed.hidden=!ed.hidden;
+    if(!ed.hidden)$("cat-plan-in").focus();
+  });
+  $("cat-plan-ok").addEventListener("click",async()=>{
+    c.valor=+$("cat-plan-in").value||0;
+    await salvar();render();abrirCat(id);
+  });
   if($("cat-add"))$("cat-add").addEventListener("click",()=>folha(null,id));
   $("s-cat").querySelectorAll("[data-ed]").forEach(b=>
     b.addEventListener("click",()=>folha(S.negs.find(n=>n.id===b.dataset.ed))));
@@ -778,11 +836,11 @@ function pay(){
         const it=todas.filter(p=>mesDe(p.data)===m);
         return `<div class="month"><span class="m-name">${nomeMes(m)}</span>
           <span class="m-sum">${brl(it.reduce((a,p)=>a+p.valor,0))}</span></div>
-          ${it.map(p=>`<button class="pmt ${p.pago?"pmt--paid":""}" data-pg="${p.neg}:${p.idx}"
+          ${it.map(p=>`<button class="pmt ${p.pago?"pmt--paid":""}" data-pg="${p.neg}:${p.id}"
             aria-pressed="${p.pago}">
             <span class="pmt-box">${p.pago?ICON.check:""}</span>
             <span class="pmt-body"><span class="pmt-name">${esc(p.forn)}</span>
-              <span class="pmt-sub">${p.rot} · ${dBR(p.data)}</span></span>
+              <span class="pmt-sub">${esc(p.rot||"")}${p.rot?" · ":""}${dBR(p.data)}</span></span>
             <span class="pmt-val">${brl(p.valor)}</span></button>`).join("")}`;
       }).join("")}
     `:`<div class="empty">
@@ -793,11 +851,58 @@ function pay(){
     </div>`}`;
 
   $("s-pay").querySelectorAll("[data-pg]").forEach(el=>el.addEventListener("click",async()=>{
-    const [id,i]=el.dataset.pg.split(":"),n=S.negs.find(x=>x.id===id),k=+i;
+    const [id,pid]=el.dataset.pg.split(":"),n=S.negs.find(x=>x.id===id);
     n.pagos=n.pagos||[];
-    n.pagos.includes(k)?n.pagos.splice(n.pagos.indexOf(k),1):n.pagos.push(k);
+    n.pagos.includes(pid)?n.pagos.splice(n.pagos.indexOf(pid),1):n.pagos.push(pid);
     await salvar();pay();
   }));
+}
+
+/* ---------- ajustes ---------- */
+function folhaAjustes(){
+  const fechar=()=>{$("scrim").hidden=true;$("sheet").hidden=true};
+  $("scrim").hidden=false;$("sheet").hidden=false;
+  $("sheet").innerHTML=`
+    <div class="grip"></div>
+    <h2 class="title" style="font-size:var(--t-lg)">Ajustes</h2>
+    <p class="sub" style="margin-bottom:var(--s5)">Mudar o plano não mexe em nenhum orçamento
+      já cadastrado — só no que você pretende gastar.</p>
+    <div class="pair">
+      <div class="field"><label class="label" for="a-data">Data</label>
+        <input type="date" id="a-data" value="${S.evento.data}"></div>
+      <div class="field"><label class="label" for="a-conv">Convidados</label>
+        <input type="number" id="a-conv" value="${S.evento.convidados}" min="1"></div>
+    </div>
+    <div class="field">
+      <span class="label">Plano por categoria</span>
+      <div id="a-plano">${S.plano.map(c=>`
+        <div class="plan-row">
+          <input type="text" value="${esc(c.nome)}" data-nome="${c.id}" aria-label="Nome">
+          <input type="number" value="${c.valor||""}" placeholder="R$ 0" data-val="${c.id}" aria-label="Valor">
+        </div>`).join("")}</div>
+      <div class="tally tally--ok" id="a-total"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn--ghost" id="a-x">Cancelar</button>
+      <button class="btn btn--primary" id="a-ok">Salvar</button>
+    </div>`;
+  const soma=()=>{
+    const t=[...$("a-plano").querySelectorAll("[data-val]")].reduce((a,i)=>a+(+i.value||0),0);
+    $("a-total").innerHTML=`<span>Total do plano</span><span>${brl(t)}</span>`;
+  };
+  soma();
+  $("a-plano").addEventListener("input",soma);
+  $("a-x").addEventListener("click",fechar);
+  $("a-ok").addEventListener("click",async()=>{
+    S.evento.data=$("a-data").value||S.evento.data;
+    S.evento.convidados=+$("a-conv").value||S.evento.convidados;
+    S.plano.forEach(c=>{
+      c.nome=$("a-plano").querySelector(`[data-nome="${c.id}"]`).value||c.nome;
+      c.valor=+$("a-plano").querySelector(`[data-val="${c.id}"]`).value||0;
+    });
+    await salvar();fechar();render();
+    tela==="cat"&&catAtual?abrirCat(catAtual):ir(tela);
+  });
 }
 
 /* ---------- folha de orçamento ---------- */
@@ -888,19 +993,17 @@ function folha(neg,catPre){
         <input type="text" id="f-valt" value="${esc(neg?.validadeTexto||"")}" placeholder="60 dias"></div>
     </div>
 
-    <div class="field"><span class="label">Como vai pagar</span>
-      <div class="pair">
-        <input type="number" id="f-ent" step="0.01" placeholder="Entrada R$"
-          value="${neg?.pag?.entrada??""}" aria-label="Entrada em reais">
-        <input type="number" id="f-entp" step="0.1" placeholder="ou % de entrada"
-          value="${neg?.pag?.entradaPct??""}" aria-label="Entrada em percentual">
+    <div class="field"><span class="label">Parcelas</span>
+      <div class="adds" id="f-parcs"></div>
+      <div class="gen">
+        <button class="btn btn--ghost btn--sm" id="f-p-add" style="width:auto">+ parcela</button>
+        <span class="gen-sep">ou</span>
+        <input type="number" id="f-p-n" value="10" min="1" max="60" aria-label="Quantidade">
+        <button class="btn btn--ghost btn--sm" id="f-p-gen" style="width:auto">mensais</button>
       </div>
-      <div class="pair" style="margin-top:var(--s2)">
-        <input type="date" id="f-entd" value="${neg?.pag?.dataEntrada||""}" aria-label="Data da entrada">
-        <input type="number" id="f-parc" placeholder="nº de parcelas"
-          value="${neg?.pag?.parcelas??""}" aria-label="Número de parcelas">
-      </div>
-      <p class="hint">As parcelas começam no mês seguinte à entrada.</p></div>
+      <div class="tally" id="f-p-sum"></div>
+      <p class="hint">Cada linha tem data própria. Alterne entre R$ e % no botão.
+        Em %, a parcela se recalcula sozinha se o valor do orçamento mudar.</p></div>
 
     <div class="field"><label class="label" for="f-notas">Anotação para negociar</label>
       <input type="text" id="f-notas" value="${esc(neg?.notas||"")}"
@@ -910,6 +1013,65 @@ function folha(neg,catPre){
       <button class="btn btn--ghost" id="f-x">Cancelar</button>
       <button class="btn btn--primary" id="f-ok">Salvar</button>
     </div>`;
+
+  let parcs=JSON.parse(JSON.stringify(neg?.parcelas||[]));
+
+  const totalAtual=()=>{
+    const modo=$("f-modo")?.querySelector(".on")?.dataset.m;
+    const v=+$("f-val")?.value||0,q=+$("f-qtd")?.value||0;
+    return (modo==="pp"?v*q:v)+adds.reduce((a,x)=>a+(+x.valor||0),0);
+  };
+  const somaParc=()=>{const t=totalAtual();
+    return parcs.reduce((a,p)=>a+(p.pct!=null&&p.pct!==""?t*(+p.pct)/100:(+p.valor||0)),0)};
+
+  const desenhaParcs=()=>{
+    const t=totalAtual(),soma=somaParc(),falta=t-soma;
+    $("f-parcs").innerHTML=parcs.map((p,i)=>{
+      const emPct=p.pct!=null&&p.pct!=="";
+      const efet=emPct?t*(+p.pct)/100:(+p.valor||0);
+      return `<div class="parc-row">
+        <input type="date" value="${p.data||""}" data-pd="${i}" aria-label="Vencimento">
+        <input type="number" step="0.01" value="${emPct?p.pct:(p.valor??"")}"
+          data-pv="${i}" placeholder="0" aria-label="Valor">
+        <button type="button" class="unit${emPct?" unit--pct":""}" data-pu="${i}"
+          aria-label="Alternar entre reais e porcentagem">${emPct?"%":"R$"}</button>
+        <button type="button" data-px="${i}" aria-label="Remover parcela">×</button>
+        ${emPct?`<span class="parc-eq">${brl(efet)}</span>`:""}
+      </div>`;
+    }).join("")||`<p class="hint" style="margin:0 0 var(--s2)">Nenhuma parcela ainda.</p>`;
+
+    $("f-p-sum").className="tally"+(Math.abs(falta)<1?" tally--ok":"");
+    $("f-p-sum").innerHTML=parcs.length
+      ? `<span>${brl(soma)} de ${brl(t)}</span>
+         <span>${Math.abs(falta)<1?"fecha certo":(falta>0?`faltam ${brl(falta)}`:`sobram ${brl(-falta)}`)}</span>`
+      : `<span>Total do orçamento</span><span>${brl(t)}</span>`;
+
+    $("f-parcs").querySelectorAll("[data-pd]").forEach(el=>el.addEventListener("input",e=>{
+      parcs[+e.target.dataset.pd].data=e.target.value;desenhaParcs()}));
+    $("f-parcs").querySelectorAll("[data-pv]").forEach(el=>el.addEventListener("input",e=>{
+      const p=parcs[+e.target.dataset.pv],v=e.target.value;
+      p.pct!=null&&p.pct!==""?p.pct=v:p.valor=v;
+      const s=$("f-p-sum"),soma2=somaParc(),f2=totalAtual()-soma2;   // atualiza só a soma
+      s.className="tally"+(Math.abs(f2)<1?" tally--ok":"");
+      s.innerHTML=`<span>${brl(soma2)} de ${brl(totalAtual())}</span>
+        <span>${Math.abs(f2)<1?"fecha certo":(f2>0?`faltam ${brl(f2)}`:`sobram ${brl(-f2)}`)}</span>`;
+    }));
+    $("f-parcs").querySelectorAll("[data-pu]").forEach(el=>el.addEventListener("click",()=>{
+      const p=parcs[+el.dataset.pu],t2=totalAtual();
+      if(p.pct!=null&&p.pct!==""){p.valor=t2*(+p.pct)/100;p.pct=null}
+      else{p.pct=t2?+((+p.valor||0)/t2*100).toFixed(2):0;p.valor=null}
+      desenhaParcs();
+    }));
+    $("f-parcs").querySelectorAll("[data-px]").forEach(el=>el.addEventListener("click",()=>{
+      parcs.splice(+el.dataset.px,1);desenhaParcs()}));
+  };
+
+  const proxData=()=>{
+    const datas=parcs.map(p=>p.data).filter(Boolean).sort();
+    if(!datas.length)return hoje();
+    const [y,m,d]=datas[datas.length-1].split("-").map(Number);
+    return new Date(Date.UTC(y,m,d)).toISOString().slice(0,10);
+  };
 
   const desenhaAdds=()=>{
     $("f-adds").innerHTML=adds.map((a,i)=>`<div class="add-row">
@@ -921,18 +1083,41 @@ function folha(neg,catPre){
     $("f-adds").querySelectorAll("[data-v]").forEach(i=>
       i.addEventListener("input",e=>adds[+e.target.dataset.v].valor=+e.target.value||0));
     $("f-adds").querySelectorAll("[data-x]").forEach(b=>
-      b.addEventListener("click",()=>{adds.splice(+b.dataset.x,1);desenhaAdds()}));
+      b.addEventListener("click",()=>{adds.splice(+b.dataset.x,1);desenhaAdds();desenhaParcs()}));
   };
   desenhaAdds();
+  desenhaParcs();
+
+  $("f-p-add").addEventListener("click",()=>{
+    const falta=totalAtual()-somaParc();
+    parcs.push({id:uid(),rot:"",data:proxData(),valor:falta>1?+falta.toFixed(2):null,pct:null});
+    desenhaParcs();
+  });
+  $("f-p-gen").addEventListener("click",()=>{
+    const k=Math.max(1,Math.min(60,+$("f-p-n").value||1));
+    const falta=totalAtual()-somaParc();
+    if(falta<=0)return;
+    let [y,m,d]=proxData().split("-").map(Number);
+    for(let i=0;i<k;i++){
+      parcs.push({id:uid(),rot:"",data:new Date(Date.UTC(y,m-1+i,d)).toISOString().slice(0,10),
+        valor:+(falta/k).toFixed(2),pct:null});
+    }
+    desenhaParcs();
+  });
+  // o total muda ao editar valor, quantidade ou adicionais: a soma tem que acompanhar
+  ["f-val","f-qtd"].forEach(id=>$(id).addEventListener("input",desenhaParcs));
+  $("f-adds").addEventListener("input",desenhaParcs);
 
   $("f-modo").addEventListener("click",e=>{
     const b=e.target.closest("button");if(!b)return;
     $("f-modo").querySelectorAll("button").forEach(x=>x.classList.remove("on"));
     b.classList.add("on");$("f-qtdw").hidden=b.dataset.m!=="pp";
+    desenhaParcs();
   });
-  $("f-add").addEventListener("click",()=>{adds.push({rotulo:"",valor:0});desenhaAdds()});
+  $("f-add").addEventListener("click",()=>{adds.push({rotulo:"",valor:0});desenhaAdds();desenhaParcs()});
   $("f-x").addEventListener("click",fechar);
-  $("f-file").addEventListener("change",e=>{if(e.target.files[0])importar(e.target.files[0],desenhaAdds,v=>adds=v)});
+  $("f-file").addEventListener("change",e=>{if(e.target.files[0])
+    importar(e.target.files[0],()=>{desenhaAdds();desenhaParcs()},v=>adds=v,v=>parcs=v)});
   $("f-ok").addEventListener("click",async()=>{
     const forn=$("f-forn").value.trim();
     if(!forn){$("f-forn").focus();return}
@@ -942,8 +1127,7 @@ function folha(neg,catPre){
       valor:modo==="pp"?v*q:v,adicionais:adds.filter(a=>a.rotulo||a.valor)};
     const campos={forn,validade:$("f-val2").value||null,validadeTexto:$("f-valt").value||null,
       notas:$("f-notas").value||null,
-      pag:{entrada:+$("f-ent").value||null,entradaPct:+$("f-entp").value||null,
-           dataEntrada:$("f-entd").value||null,parcelas:+$("f-parc").value||null}};
+      parcelas:parcs.filter(p=>p.data&&((p.pct!=null&&p.pct!=="")||p.valor))};
     if(novo)S.negs.push({id:uid(),estado:"cotando",blocos:[bloco],historico:[],pagos:[],...campos});
     else{neg.historico=[...(neg.historico||[]),{data:hoje(),efetivo:totalNeg(neg)}];
          Object.assign(neg,campos);neg.blocos=[bloco]}
@@ -952,7 +1136,7 @@ function folha(neg,catPre){
   });
 }
 
-async function importar(file,redesenhar,setAdds){
+async function importar(file,redesenhar,setAdds,setParcs){
   const st=$("imp-st");st.hidden=false;st.className="status";
   st.innerHTML=`<span class="spinner"></span><span>Lendo ${esc(file.name)}…</span>`;
   $("imp-lbl").textContent=file.name;
@@ -987,8 +1171,9 @@ async function importar(file,redesenhar,setAdds){
     }
     if(d.validade)$("f-val2").value=d.validade;
     if(d.validade_texto)$("f-valt").value=d.validade_texto;
-    if(Array.isArray(d.datas_parcela)&&d.datas_parcela[0]&&!$("f-entd").value)
-      $("f-entd").value=d.datas_parcela[0];
+    if(Array.isArray(d.datas_parcela)&&d.datas_parcela.length&&!parcs.length){
+      setParcs(d.datas_parcela.map(dt=>({id:uid(),rot:"",data:dt,valor:null,pct:null})));
+    }
     if(d.observacao_negociacao)$("f-notas").value=d.observacao_negociacao;
 
     const av=[...(d.ambiguidades||[])];
