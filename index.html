@@ -288,6 +288,11 @@ window.storage = window.storage || {
   .btn--primary:hover:not(:disabled){background:var(--ac-2)}
   .btn--ghost:hover:not(:disabled){background:var(--sf-2);color:var(--tx)}
 }
+.edit{background:none;border:0;padding:0 0 0 var(--s2);cursor:pointer;
+  font-size:var(--t-xs);font-weight:600;color:var(--ac);
+  transition:opacity var(--dur-fast) ease}
+.edit:hover{opacity:.7}
+.edit:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft);border-radius:var(--r-sm)}
 .link{background:none;border:0;padding:0;cursor:pointer;font-size:var(--t-sm);
   color:var(--tx-2);display:inline-flex;align-items:center;gap:var(--s1);
   margin-bottom:var(--s4);transition:color var(--dur-fast) ease}
@@ -663,7 +668,8 @@ function home(){
   $("s-home").innerHTML=`
     <div class="head">
       <div class="display">${dias>0?dias:0}<span style="font-size:var(--t-xl)"> dias</span></div>
-      <p class="sub">${dBR(S.evento.data)} · ${S.evento.convidados} convidados</p>
+      <p class="sub">${dBR(S.evento.data)} · ${S.evento.convidados} convidados
+        <button class="edit" id="home-cfg">ajustar</button></p>
     </div>
     ${!S.negs.length?vazioHome():`
     <div class="stagger">
@@ -709,6 +715,7 @@ function home(){
       </div>`:""}
     </div>`}`;
   if($("home-add"))$("home-add").addEventListener("click",()=>folha());
+  if($("home-cfg"))$("home-cfg").addEventListener("click",folhaAjustes);
 }
 const vazioHome=()=>`
   <div class="empty enter">
@@ -761,7 +768,13 @@ function abrirCat(id){
     <button class="link" id="volta">${ICON.back} Categorias</button>
     <div class="head">
       <h1 class="title">${esc(c.nome)}</h1>
-      <p class="sub">Planejado ${brl(c.valor)}${ns.length?` · ${ns.length} orçamento${ns.length>1?"s":""}`:""}</p>
+      <p class="sub">Planejado <span id="cat-plan-v">${brl(c.valor)}</span><button class="edit" id="cat-plan">ajustar</button>${ns.length?` · ${ns.length} orçamento${ns.length>1?"s":""}`:""}</p>
+      <div id="cat-plan-ed" hidden style="margin-top:var(--s3)">
+        <div class="pair">
+          <input type="number" id="cat-plan-in" value="${c.valor||""}" placeholder="R$ 0" aria-label="Valor planejado">
+          <button class="btn btn--primary btn--sm" id="cat-plan-ok">Salvar</button>
+        </div>
+      </div>
     </div>
     ${menor!=null?(menor>(c.valor||0)
       ?`<div class="note">Mesmo o mais barato fica <b>${brl(menor-(c.valor||0))} acima</b> do plano.</div>`
@@ -820,6 +833,14 @@ function abrirCat(id){
       Mais um orçamento em ${esc(c.nome)}</button>`:""}`;
 
   $("volta").addEventListener("click",()=>ir("cats"));
+  $("cat-plan").addEventListener("click",()=>{
+    const ed=$("cat-plan-ed");ed.hidden=!ed.hidden;
+    if(!ed.hidden)$("cat-plan-in").focus();
+  });
+  $("cat-plan-ok").addEventListener("click",async()=>{
+    c.valor=+$("cat-plan-in").value||0;
+    await salvar();render();abrirCat(id);
+  });
   if($("cat-add"))$("cat-add").addEventListener("click",()=>folha(null,id));
   $("s-cat").querySelectorAll("[data-ed]").forEach(b=>
     b.addEventListener("click",()=>folha(S.negs.find(n=>n.id===b.dataset.ed))));
@@ -885,6 +906,53 @@ function pay(){
   }));
 }
 
+/* ---------- ajustes ---------- */
+function folhaAjustes(){
+  const fechar=()=>{$("scrim").hidden=true;$("sheet").hidden=true};
+  $("scrim").hidden=false;$("sheet").hidden=false;
+  $("sheet").innerHTML=`
+    <div class="grip"></div>
+    <h2 class="title" style="font-size:var(--t-lg)">Ajustes</h2>
+    <p class="sub" style="margin-bottom:var(--s5)">Mudar o plano não mexe em nenhum orçamento
+      já cadastrado — só no que você pretende gastar.</p>
+    <div class="pair">
+      <div class="field"><label class="label" for="a-data">Data</label>
+        <input type="date" id="a-data" value="${S.evento.data}"></div>
+      <div class="field"><label class="label" for="a-conv">Convidados</label>
+        <input type="number" id="a-conv" value="${S.evento.convidados}" min="1"></div>
+    </div>
+    <div class="field">
+      <span class="label">Plano por categoria</span>
+      <div id="a-plano">${S.plano.map(c=>`
+        <div class="plan-row">
+          <input type="text" value="${esc(c.nome)}" data-nome="${c.id}" aria-label="Nome">
+          <input type="number" value="${c.valor||""}" placeholder="R$ 0" data-val="${c.id}" aria-label="Valor">
+        </div>`).join("")}</div>
+      <div class="tally tally--ok" id="a-total"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn--ghost" id="a-x">Cancelar</button>
+      <button class="btn btn--primary" id="a-ok">Salvar</button>
+    </div>`;
+  const soma=()=>{
+    const t=[...$("a-plano").querySelectorAll("[data-val]")].reduce((a,i)=>a+(+i.value||0),0);
+    $("a-total").innerHTML=`<span>Total do plano</span><span>${brl(t)}</span>`;
+  };
+  soma();
+  $("a-plano").addEventListener("input",soma);
+  $("a-x").addEventListener("click",fechar);
+  $("a-ok").addEventListener("click",async()=>{
+    S.evento.data=$("a-data").value||S.evento.data;
+    S.evento.convidados=+$("a-conv").value||S.evento.convidados;
+    S.plano.forEach(c=>{
+      c.nome=$("a-plano").querySelector(`[data-nome="${c.id}"]`).value||c.nome;
+      c.valor=+$("a-plano").querySelector(`[data-val="${c.id}"]`).value||0;
+    });
+    await salvar();fechar();render();
+    tela==="cat"&&catAtual?abrirCat(catAtual):ir(tela);
+  });
+}
+
 /* ---------- folha de orçamento ---------- */
 const PROMPT=(cats,conv)=>`Você extrai dados de propostas de fornecedores de casamento no Brasil.
 Responda APENAS com JSON válido, sem markdown, sem crase, sem explicação.
@@ -932,7 +1000,7 @@ function folha(neg,catPre){
       ?"Imposto, frete e equipe entram como adicionais, nunca no valor principal. É o que revela o preço real."
       :"A versão anterior fica guardada, para calcular quanto ele já cedeu."}</p>
 
-    <div class="field">
+    <div class="field" hidden>
       <span class="label">Importar do arquivo</span>
       <label class="drop" for="f-file">${ICON.file}
         <span id="imp-lbl">PDF, print ou foto do orçamento</span></label>
@@ -1127,9 +1195,17 @@ async function importar(file,redesenhar,setAdds,setParcs){
     const parte=file.type==="application/pdf"
       ?{type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}}
       :{type:"image",source:{type:"base64",media_type:file.type,data:b64}};
-    const r=await fetch("/api/extrair",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mime:file.type,data:b64,prompt:PROMPT(S.plano.map(c=>c.id).join(", "),S.evento.convidados)})});
-    const d=await r.json();
-    if(d.error)throw new Error(d.error);
+    const r=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",
+        content:[parte,{type:"text",text:PROMPT(S.plano.map(c=>c.id).join(", "),S.evento.convidados)
+          +"\n\nExtraia a proposta do documento acima."}]}]})});
+    const data=await r.json();
+    if(data.error)throw new Error(data.error.message||"erro na leitura");
+    const raw=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+    const a=raw.indexOf("{"),z=raw.lastIndexOf("}");
+    if(a<0||z<0)throw new Error("não veio um resultado legível");
+    const d=JSON.parse(raw.slice(a,z+1));
 
     if(d.fornecedor)$("f-forn").value=d.fornecedor;
     if(d.categoria&&S.plano.some(c=>c.id===d.categoria))$("f-cat").value=d.categoria;
