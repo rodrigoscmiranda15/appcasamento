@@ -340,6 +340,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;
   color:var(--tx-2);font-size:var(--t-sm);cursor:pointer;text-align:center;padding:var(--s4);
   transition:border-color var(--dur-fast) ease,background-color var(--dur-fast) ease}
 .drop svg{color:var(--tx-3)}
+.drop-sub{font-size:11px;color:var(--tx-3);letter-spacing:.02em}
 @media (hover:hover) and (pointer:fine){
   .drop:hover{border-color:var(--ac-line);background:var(--ac-soft)}
 }
@@ -953,11 +954,20 @@ function folha(neg,catPre){
       :"A versão anterior fica guardada, para calcular quanto ele já cedeu."}</p>
 
     <div class="field">
-      <span class="label">Importar do arquivo</span>
+      <span class="label">Lançar automaticamente</span>
       <label class="drop" for="f-file">${ICON.file}
-        <span id="imp-lbl">PDF, print ou foto do orçamento</span></label>
+        <span id="imp-lbl">PDF, planilha, print ou foto</span>
+        <span class="drop-sub">.pdf · .xlsx · .csv · .jpg · .png</span></label>
       <input type="file" id="f-file" hidden
-        accept="application/pdf,image/png,image/jpeg,image/webp">
+        accept=".pdf,.xlsx,.xls,.csv,.tsv,image/png,image/jpeg,image/webp,application/pdf">
+      <button type="button" class="edit" id="f-txt-abre"
+        style="padding:var(--s2) 0 0">ou colar o texto da mensagem</button>
+      <div id="f-txt-wrap" hidden style="margin-top:var(--s2)">
+        <textarea id="f-txt" rows="4"
+          placeholder="Oi! Nosso buffet fica R$ 240 por convidado, mínimo 100 pessoas, 6h de festa com open bar. Bolo não incluso."></textarea>
+        <button class="btn btn--ghost btn--sm" id="f-txt-ok"
+          style="width:auto;margin-top:var(--s2)">Ler texto</button>
+      </div>
       <div class="status" id="imp-st" hidden></div>
     </div>
 
@@ -1116,8 +1126,15 @@ function folha(neg,catPre){
   });
   $("f-add").addEventListener("click",()=>{adds.push({rotulo:"",valor:0});desenhaAdds();desenhaParcs()});
   $("f-x").addEventListener("click",fechar);
-  $("f-file").addEventListener("change",e=>{if(e.target.files[0])
-    importar(e.target.files[0],()=>{desenhaAdds();desenhaParcs()},v=>adds=v,v=>parcs=v)});
+  const impArgs=[()=>{desenhaAdds();desenhaParcs()},v=>adds=v,v=>parcs=v];
+  $("f-file").addEventListener("change",e=>{
+    if(e.target.files[0])importar(e.target.files[0],...impArgs)});
+  $("f-txt-abre").addEventListener("click",()=>{
+    const w=$("f-txt-wrap");w.hidden=!w.hidden;if(!w.hidden)$("f-txt").focus()});
+  $("f-txt-ok").addEventListener("click",()=>{
+    const t=$("f-txt").value.trim();
+    if(t.length<20){$("f-txt").focus();return}
+    importar(t,...impArgs)});
   $("f-ok").addEventListener("click",async()=>{
     const forn=$("f-forn").value.trim();
     if(!forn){$("f-forn").focus();return}
@@ -1136,28 +1153,73 @@ function folha(neg,catPre){
   });
 }
 
-async function importar(file,redesenhar,setAdds,setParcs){
+/* ---------- seam: única chamada ao modelo. O empacotador troca só isto. ---------- */
+async function chamarModelo(partes){
+  const content=partes.map(p=>p.tipo==="texto"
+    ?{type:"text",text:p.texto}
+    :(p.mime==="application/pdf"
+        ?{type:"document",source:{type:"base64",media_type:"application/pdf",data:p.data}}
+        :{type:"image",source:{type:"base64",media_type:p.mime,data:p.data}}));
+  content.push({type:"text",text:PROMPT(S.plano.map(c=>c.id).join(", "),S.evento.convidados)
+    +"\n\nExtraia a proposta acima."});
+  const r=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,
+      messages:[{role:"user",content}]})});
+  const data=await r.json();
+  if(data.error)throw new Error(data.error.message||"erro na leitura");
+  const raw=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+  const a=raw.indexOf("{"),z=raw.lastIndexOf("}");
+  if(a<0||z<0)throw new Error("não veio um resultado legível");
+  return JSON.parse(raw.slice(a,z+1));
+}
+
+/* ---------- leitura de planilha: converte para texto antes de enviar ---------- */
+let sheetJS=null;
+function carregarSheetJS(){
+  if(sheetJS)return sheetJS;
+  sheetJS=new Promise((ok,erro)=>{
+    const t=document.createElement("script");
+    t.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    t.onload=()=>ok(window.XLSX);
+    t.onerror=()=>erro(new Error("não consegui carregar o leitor de planilha"));
+    document.head.appendChild(t);
+  });
+  return sheetJS;
+}
+async function planilhaParaTexto(file){
+  const XLSX=await carregarSheetJS();
+  const buf=await file.arrayBuffer();
+  const wb=XLSX.read(buf,{type:"array"});
+  // todas as abas viram CSV. Orçamento de decoração costuma ter uma aba por ambiente.
+  return wb.SheetNames.map(nome=>
+    `### ${nome}\n`+XLSX.utils.sheet_to_csv(wb.Sheets[nome],{blankrows:false})
+  ).join("\n\n").slice(0,60000);
+}
+
+async function importar(entrada,redesenhar,setAdds,setParcs){
   const st=$("imp-st");st.hidden=false;st.className="status";
-  st.innerHTML=`<span class="spinner"></span><span>Lendo ${esc(file.name)}…</span>`;
-  $("imp-lbl").textContent=file.name;
+  const ehTexto=typeof entrada==="string";
+  const nome=ehTexto?"o texto colado":entrada.name;
+  st.innerHTML=`<span class="spinner"></span><span>Lendo ${esc(nome)}…</span>`;
+  if(!ehTexto)$("imp-lbl").textContent=entrada.name;
   try{
-    const b64=await new Promise((res,rej)=>{const r=new FileReader();
-      r.onload=()=>res(r.result.split(",")[1]);r.onerror=()=>rej(new Error("não consegui abrir o arquivo"));
-      r.readAsDataURL(file)});
-    const parte=file.type==="application/pdf"
-      ?{type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}}
-      :{type:"image",source:{type:"base64",media_type:file.type,data:b64}};
-    const r=await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",
-        content:[parte,{type:"text",text:PROMPT(S.plano.map(c=>c.id).join(", "),S.evento.convidados)
-          +"\n\nExtraia a proposta do documento acima."}]}]})});
-    const data=await r.json();
-    if(data.error)throw new Error(data.error.message||"erro na leitura");
-    const raw=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
-    const a=raw.indexOf("{"),z=raw.lastIndexOf("}");
-    if(a<0||z<0)throw new Error("não veio um resultado legível");
-    const d=JSON.parse(raw.slice(a,z+1));
+    let partes;
+    if(ehTexto){
+      partes=[{tipo:"texto",texto:entrada.slice(0,60000)}];
+    } else if(/\.(xlsx|xls)$/i.test(entrada.name)){
+      st.innerHTML=`<span class="spinner"></span><span>Abrindo a planilha…</span>`;
+      partes=[{tipo:"texto",texto:await planilhaParaTexto(entrada)}];
+    } else if(/\.(csv|tsv)$/i.test(entrada.name)||entrada.type.startsWith("text/")){
+      partes=[{tipo:"texto",texto:(await entrada.text()).slice(0,60000)}];
+    } else {
+      const b64=await new Promise((res,rej)=>{const r=new FileReader();
+        r.onload=()=>res(r.result.split(",")[1]);
+        r.onerror=()=>rej(new Error("não consegui abrir o arquivo"));
+        r.readAsDataURL(entrada)});
+      partes=[{tipo:"arquivo",mime:entrada.type||"application/pdf",data:b64}];
+    }
+    const d=await chamarModelo(partes);
 
     if(d.fornecedor)$("f-forn").value=d.fornecedor;
     if(d.categoria&&S.plano.some(c=>c.id===d.categoria))$("f-cat").value=d.categoria;

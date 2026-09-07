@@ -90,30 +90,24 @@ def main():
         sys.exit(f"não encontrei {ORIGEM}")
     corpo = ORIGEM.read_text(encoding="utf-8")
 
-    # 3. Troca a chamada do artefato pelo proxy do servidor
+    # 3. Troca a seam de chamada ao modelo pelo proxy do servidor
     if SEM_EXTRACAO:
-        corpo = corpo.replace('<div class="field">\n      <span class="label">Importar do arquivo</span>',
-                              '<div class="field" hidden>\n      <span class="label">Importar do arquivo</span>')
+        corpo = corpo.replace('<span class="label">Lançar automaticamente</span>',
+                              '<span class="label" hidden>Lançar automaticamente</span>')
+        corpo = corpo.replace('<div class="field">\n      <span class="label" hidden>Lançar automaticamente</span>',
+                              '<div class="field" hidden>\n      <span class="label" hidden>Lançar automaticamente</span>')
     else:
-        antigo = re.search(
-            r'const r=await fetch\("https://api\.anthropic\.com/v1/messages".*?\}\)\}\);',
-            corpo, re.S)
-        if not antigo:
-            print("  ! não achei a chamada de extração; conferir manualmente")
-        else:
-            novo = ('const r=await fetch("%s",{method:"POST",'
-                    'headers:{"Content-Type":"application/json"},'
-                    'body:JSON.stringify({mime:file.type,data:b64,'
-                    'prompt:PROMPT(S.plano.map(c=>c.id).join(", "),S.evento.convidados)})});' % PROXY)
-            corpo = corpo.replace(antigo.group(0), novo)
-            # o proxy já devolve JSON limpo: some o recorte do primeiro { ao último }
-            corpo = corpo.replace(
-                'const data=await r.json();\n    if(data.error)throw new Error(data.error.message||"erro na leitura");\n'
-                '    const raw=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");\n'
-                '    const a=raw.indexOf("{"),z=raw.lastIndexOf("}");\n'
-                '    if(a<0||z<0)throw new Error("não veio um resultado legível");\n'
-                '    const d=JSON.parse(raw.slice(a,z+1));',
-                'const d=await r.json();\n    if(d.error)throw new Error(d.error);')
+        seam = re.search(r"async function chamarModelo\(partes\)\{.*?\n\}", corpo, re.S)
+        if not seam:
+            sys.exit("não achei a função chamarModelo; conferir o app")
+        corpo = corpo.replace(seam.group(0), """async function chamarModelo(partes){
+  const r=await fetch(%r,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({partes,prompt:PROMPT(S.plano.map(c=>c.id).join(", "),S.evento.convidados)
+      +"\\n\\nExtraia a proposta acima."})});
+  const d=await r.json();
+  if(!r.ok||d.error)throw new Error(d.error||("erro "+r.status));
+  return d;
+}""" % PROXY)
 
     html = f"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -152,9 +146,9 @@ def main():
         (DIST / f"icon-{s}.png").write_bytes(png(s, COR_ACENTO, COR_TEMA))
 
     kb = len(html.encode()) / 1024
-    print(f"docs/index.html  {kb:.0f} KB"
-          f"{'  (sem extração)' if SEM_EXTRACAO else f'  extração via {PROXY}'}")
-    print("dist/manifest.json, dist/icon-180.png, dist/icon-512.png")
+    print(f"{DIST}/index.html  {kb:.0f} KB"
+          f"{'  (SEM extração — sem IA)' if SEM_EXTRACAO else f'  extração via {PROXY}'}")
+    print(f"{DIST}/manifest.json, {DIST}/icon-180.png, {DIST}/icon-512.png")
 
 if __name__ == "__main__":
     main()
