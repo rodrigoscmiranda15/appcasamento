@@ -1,0 +1,1076 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Orçamento do casamento</title>
+<meta name="theme-color" content="#faf9f7">
+<meta name="color-scheme" content="light">
+<meta name="description" content="Controle de orçamento e parcelas do casamento.">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Orçamento">
+
+<style>
+html,body{margin:0;padding:0;background:#faf9f7;
+  -webkit-text-size-adjust:100%;overscroll-behavior-y:none}
+body{min-height:100dvh}
+@media (max-width:680px){
+  #app{padding:0}
+  #app .stage{max-width:none;width:100%;height:100dvh;border:0;border-radius:0;box-shadow:none}
+  #app .screen{padding-top:max(var(--s6),calc(env(safe-area-inset-top) + var(--s4)))}
+  #app .fab{bottom:calc(84px + env(safe-area-inset-bottom))}
+  #app .sheet{padding-bottom:calc(var(--s6) + env(safe-area-inset-bottom))}
+  #app input,#app select,#app textarea{font-size:16px}
+  #app .parc-row input,#app .gen input{font-size:16px}
+}
+</style>
+
+
+<script>
+window.storage = window.storage || {
+  async get(k){
+    const v = localStorage.getItem(k);
+    if (v === null) throw new Error("chave inexistente: " + k);
+    return { key:k, value:v, shared:false };
+  },
+  async set(k,v){ localStorage.setItem(k,v); return { key:k, value:v, shared:false }; },
+  async delete(k){ localStorage.removeItem(k); return { key:k, deleted:true }; },
+  async list(prefix=""){
+    return { keys:Object.keys(localStorage).filter(k=>k.startsWith(prefix)), prefix };
+  }
+};
+</script>
+
+</head>
+<body>
+<div id="app"><div class="stage">
+  <div class="screens" id="screens">
+    <section class="screen" id="s-boot"></section>
+    <section class="screen" id="s-onb" hidden></section>
+    <section class="screen" id="s-home" hidden></section>
+    <section class="screen" id="s-cats" hidden></section>
+    <section class="screen" id="s-cat" hidden></section>
+    <section class="screen" id="s-pay" hidden></section>
+  </div>
+
+  <button class="fab" id="fab" hidden aria-label="Adicionar orçamento">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+
+  <nav class="tabbar" id="nav" hidden aria-label="Seções">
+    <button class="tb is-on" data-go="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
+      Início</button>
+    <button class="tb" data-go="cats">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+      Categorias</button>
+    <button class="tb" data-go="pay">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+      Pagamentos</button>
+  </nav>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="sheet" id="sheet" hidden role="dialog" aria-modal="true"></div>
+</div></div>
+
+<style>
+/* ============================================================
+   Tokens. Nenhum valor solto no resto do arquivo.
+   ============================================================ */
+#app{
+  /* motion */
+  --ease-out:cubic-bezier(.23,1,.32,1);
+  --ease-in-out:cubic-bezier(.77,0,.175,1);
+  --ease-drawer:cubic-bezier(.32,.72,0,1);
+  --dur-press:140ms; --dur-fast:180ms; --dur-base:220ms; --dur-slow:320ms;
+
+  /* space */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+
+  /* radius */
+  --r-sm:6px; --r-md:10px; --r-lg:14px; --r-xl:20px; --r-full:9999px;
+
+  /* type */
+  --t-xs:12px; --t-sm:13px; --t-base:15px; --t-lg:18px; --t-xl:22px;
+  --t-2xl:30px; --t-3xl:40px;
+  --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+  --serif:ui-serif,Georgia,"Iowan Old Style","Times New Roman",serif;
+
+  /* neutrals — rampa quente, papel em vez de branco clínico */
+  --bg:#faf9f7;
+  --sf:#fff;
+  --sf-2:#f2f1ed;
+  --sf-3:#e9e7e2;
+  --line:rgb(28 25 20 / .09);
+  --line-2:rgb(28 25 20 / .16);
+  --tx:#1f1d19;
+  --tx-2:#5f5c55;
+  --tx-3:#928e85;
+
+  /* accent + semânticas */
+  --ac:#1c5d4a;
+  --ac-2:#164a3b;
+  --ac-soft:rgb(28 93 74 / .08);
+  --ac-line:rgb(28 93 74 / .22);
+  --ov:#9a3d1e;                    /* estouro: terracota, não vermelho de erro */
+  --ov-soft:rgb(154 61 30 / .09);
+  --wa:#8a6410;
+  --wa-soft:rgb(138 100 16 / .10);
+
+  /* elevação */
+  --sh-1:0 1px 2px rgb(28 25 20 / .05), 0 1px 1px rgb(28 25 20 / .04);
+  --sh-2:0 4px 12px rgb(28 25 20 / .07), 0 1px 3px rgb(28 25 20 / .05);
+  --sh-3:0 16px 40px rgb(28 25 20 / .13), 0 4px 12px rgb(28 25 20 / .07);
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+#app{font-family:var(--sans);font-size:var(--t-base);color:var(--tx);
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  display:flex;justify-content:center;padding:var(--s4) 0}
+#app *{box-sizing:border-box}
+#app button{font:inherit;color:inherit}
+
+.stage{position:relative;width:100%;max-width:404px;height:824px;background:var(--bg);
+  border:1px solid var(--line);border-radius:var(--r-xl);overflow:hidden;
+  box-shadow:var(--sh-2);display:flex;flex-direction:column}
+.screens{flex:1;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+.screens::-webkit-scrollbar{display:none}
+.screen{padding:var(--s6) var(--s4) 104px}
+
+/* tipografia */
+.title{font-family:var(--serif);font-size:var(--t-xl);font-weight:600;
+  letter-spacing:-.015em;line-height:1.15;margin:0}
+.sub{color:var(--tx-2);font-size:var(--t-sm);line-height:1.5;margin:var(--s2) 0 0}
+.eyebrow{font-size:var(--t-xs);font-weight:600;color:var(--tx-3);letter-spacing:.06em;
+  text-transform:uppercase;margin:0 0 var(--s3)}
+.h2{font-size:var(--t-sm);font-weight:600;letter-spacing:-.005em;margin:0 0 var(--s3)}
+.mu{color:var(--tx-2);font-size:var(--t-sm);line-height:1.55}
+.money{font-family:var(--serif);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.num{font-variant-numeric:tabular-nums}
+
+.head{margin-bottom:var(--s5)}
+.display{font-family:var(--serif);font-size:var(--t-3xl);font-weight:600;
+  letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+
+/* ============================================================
+   Superfícies
+   ============================================================ */
+.card{background:var(--sf);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:var(--s4);box-shadow:var(--sh-1);margin-bottom:var(--s3)}
+.card--quiet{background:transparent;box-shadow:none;border-style:dashed}
+
+.note{border-radius:var(--r-md);padding:var(--s3) var(--s4);font-size:var(--t-sm);
+  line-height:1.5;margin-bottom:var(--s3);background:var(--ov-soft);color:var(--ov)}
+.note--warn{background:var(--wa-soft);color:var(--wa)}
+.note--good{background:var(--ac-soft);color:var(--ac)}
+.note b{font-weight:600}
+.note ul{margin:var(--s2) 0 0;padding-left:var(--s4)}
+.note li+li{margin-top:var(--s1)}
+
+/* barra de projeção: faixas + marca do plano */
+.gauge{position:relative;height:10px;background:var(--sf-2);border-radius:var(--r-full);
+  overflow:hidden;display:flex;margin:var(--s4) 0 var(--s3)}
+.gauge i{display:block;height:100%}
+.gauge .g-done{background:var(--ac)}
+.gauge .g-open{background:var(--ac);opacity:.28}
+.gauge .g-over{background:var(--ov)}
+.gauge-mark{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--tx);
+  border-radius:var(--r-full);opacity:.55}
+.legend{display:flex;flex-wrap:wrap;gap:var(--s4);font-size:var(--t-xs);color:var(--tx-2)}
+.legend b{font-weight:600;color:var(--tx);font-variant-numeric:tabular-nums}
+.swatch{display:inline-block;width:8px;height:8px;border-radius:var(--r-full);
+  margin-right:var(--s2);vertical-align:0}
+
+.split{display:flex;align-items:baseline;justify-content:space-between;gap:var(--s3)}
+
+/* linhas de dado */
+.line{display:flex;align-items:center;gap:var(--s3);padding:var(--s3) 0;
+  border-bottom:1px solid var(--line)}
+.line:last-child{border-bottom:0;padding-bottom:0}
+.line:first-of-type{padding-top:0}
+.line .l-main{flex:1;font-size:var(--t-sm);min-width:0}
+.line .l-sub{display:block;color:var(--tx-3);font-size:var(--t-xs);margin-top:2px}
+.line .l-val{font-size:var(--t-sm);font-weight:600;font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+.line .l-val.over{color:var(--ov)}
+
+/* ============================================================
+   Linha de categoria
+   ============================================================ */
+.cat{display:flex;align-items:center;gap:var(--s3);width:100%;text-align:left;
+  background:var(--sf);border:1px solid var(--line);border-radius:var(--r-md);
+  padding:var(--s3) var(--s4);margin-bottom:var(--s2);cursor:pointer;
+  transition:border-color var(--dur-fast) var(--ease-out),
+             box-shadow var(--dur-fast) var(--ease-out),
+             transform var(--dur-press) var(--ease-out)}
+.cat:active{transform:scale(.99)}
+.cat:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft);border-color:var(--ac-line)}
+.cat--empty{background:transparent;border-style:dashed}
+.cat--empty .cat-name,.cat--empty .cat-val{color:var(--tx-3);font-weight:400}
+.cat-mark{width:20px;height:20px;border-radius:var(--r-full);flex:none;display:grid;
+  place-items:center;font-size:11px;font-weight:600;background:var(--ac);color:#fff}
+.cat-mark--open{background:transparent;border:1.5px dashed var(--line-2)}
+.cat-mark--cot{background:var(--wa-soft);color:var(--wa)}
+.cat-mark--over{background:var(--ov-soft);color:var(--ov)}
+.cat-body{flex:1;min-width:0}
+.cat-name{font-size:var(--t-sm);font-weight:600;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.cat-sub{font-size:var(--t-xs);color:var(--tx-3);margin-top:2px}
+.cat-val{text-align:right;font-size:var(--t-sm);font-weight:600;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.cat-delta{display:block;font-size:var(--t-xs);font-weight:500;margin-top:2px;color:var(--ov)}
+.cat-delta--ok{color:var(--ac)}
+@media (hover:hover) and (pointer:fine){
+  .cat:hover{border-color:var(--line-2);box-shadow:var(--sh-1)}
+}
+
+/* ============================================================
+   Cartão de orçamento (a tela que justifica o produto)
+   ============================================================ */
+.quote{background:var(--sf);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:var(--s4);margin-bottom:var(--s3);box-shadow:var(--sh-1)}
+.quote--won{border-color:var(--ac-line);box-shadow:var(--sh-1),0 0 0 1px var(--ac-soft)}
+.q-top{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--s3)}
+.q-name{font-size:var(--t-base);font-weight:600;letter-spacing:-.01em}
+.q-meta{font-size:var(--t-xs);color:var(--tx-3);margin-top:3px}
+.q-price{text-align:right;white-space:nowrap}
+.q-price .p{font-family:var(--serif);font-size:var(--t-lg);font-weight:600;
+  letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.q-price .pp{display:block;font-size:var(--t-xs);color:var(--tx-3);margin-top:2px;
+  font-variant-numeric:tabular-nums}
+
+.ledger{margin:var(--s4) 0 0;border-top:1px solid var(--line);padding-top:var(--s3)}
+.ledger .row{display:flex;justify-content:space-between;gap:var(--s3);
+  font-size:var(--t-xs);color:var(--tx-2);padding:3px 0;font-variant-numeric:tabular-nums}
+.ledger .row span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.ledger .row--add{color:var(--ov)}
+.ledger .row--sum{margin-top:var(--s2);padding-top:var(--s2);border-top:1px solid var(--line);
+  color:var(--tx);font-size:var(--t-sm);font-weight:600}
+
+.tag{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.03em;
+  text-transform:uppercase;padding:3px var(--s2);border-radius:var(--r-sm);
+  background:var(--ac-soft);color:var(--ac);margin-bottom:var(--s2)}
+
+.flag{font-size:var(--t-xs);line-height:1.5;border-radius:var(--r-sm);
+  padding:var(--s2) var(--s3);margin-top:var(--s3);background:var(--wa-soft);color:var(--wa)}
+.flag--bad{background:var(--ov-soft);color:var(--ov)}
+.flag b{display:block;margin-bottom:var(--s1)}
+.flag ul{margin:0;padding-left:var(--s4)}
+.flag li+li{margin-top:var(--s1)}
+
+/* ============================================================
+   Botões
+   ============================================================ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);
+  width:100%;font-size:var(--t-sm);font-weight:600;border-radius:var(--r-md);
+  padding:var(--s3) var(--s4);border:1px solid transparent;cursor:pointer;
+  transition:transform var(--dur-press) var(--ease-out),
+             background-color var(--dur-fast) ease,
+             border-color var(--dur-fast) ease}
+.btn:active:not(:disabled){transform:scale(.97)}
+.btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn--primary{background:var(--ac);color:#fff}
+.btn--ghost{background:var(--sf);color:var(--tx-2);border-color:var(--line-2)}
+.btn--sm{padding:var(--s2) var(--s3);font-size:var(--t-xs)}
+.btn-row{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2);margin-top:var(--s4)}
+@media (hover:hover) and (pointer:fine){
+  .btn--primary:hover:not(:disabled){background:var(--ac-2)}
+  .btn--ghost:hover:not(:disabled){background:var(--sf-2);color:var(--tx)}
+}
+.link{background:none;border:0;padding:0;cursor:pointer;font-size:var(--t-sm);
+  color:var(--tx-2);display:inline-flex;align-items:center;gap:var(--s1);
+  margin-bottom:var(--s4);transition:color var(--dur-fast) ease}
+.link:hover{color:var(--tx)}
+.link:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft);border-radius:var(--r-sm)}
+
+/* ============================================================
+   Pagamentos
+   ============================================================ */
+.month{display:flex;align-items:baseline;justify-content:space-between;
+  margin:var(--s5) 0 var(--s2);padding-bottom:var(--s2);border-bottom:1px solid var(--line)}
+.month:first-of-type{margin-top:var(--s4)}
+.month .m-name{font-size:var(--t-sm);font-weight:600;text-transform:capitalize}
+.month .m-sum{font-size:var(--t-sm);color:var(--tx-2);font-variant-numeric:tabular-nums}
+.pmt{display:flex;align-items:center;gap:var(--s3);width:100%;text-align:left;
+  background:transparent;border:0;padding:var(--s3) 0;cursor:pointer;
+  border-bottom:1px solid var(--line)}
+.pmt:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft);border-radius:var(--r-sm)}
+.pmt-box{width:20px;height:20px;border-radius:var(--r-sm);flex:none;display:grid;
+  place-items:center;border:1.5px solid var(--line-2);color:#fff;
+  transition:background-color var(--dur-fast) var(--ease-out),
+             border-color var(--dur-fast) var(--ease-out)}
+.pmt--paid .pmt-box{background:var(--ac);border-color:var(--ac)}
+.pmt--paid .pmt-name,.pmt--paid .pmt-val{color:var(--tx-3);text-decoration:line-through}
+.pmt-body{flex:1;min-width:0}
+.pmt-name{font-size:var(--t-sm);font-weight:600}
+.pmt-sub{font-size:var(--t-xs);color:var(--tx-3);margin-top:2px}
+.pmt-val{font-size:var(--t-sm);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* ============================================================
+   Navegação
+   ============================================================ */
+.tabbar{display:flex;flex:none;border-top:1px solid var(--line);
+  background:rgb(250 249 247 / .82);backdrop-filter:blur(16px) saturate(1.4);
+  padding-bottom:env(safe-area-inset-bottom)}
+.tb{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  background:none;border:0;padding:var(--s3) 0 var(--s4);cursor:pointer;
+  font-size:10px;font-weight:600;letter-spacing:.02em;color:var(--tx-3);
+  transition:color var(--dur-fast) ease}
+.tb svg{width:20px;height:20px}
+.tb.is-on{color:var(--ac)}
+.tb:focus-visible{outline:none;box-shadow:inset 0 0 0 2px var(--ac-soft)}
+
+.fab{position:absolute;right:var(--s4);bottom:84px;z-index:5;width:52px;height:52px;
+  border-radius:var(--r-full);border:0;background:var(--ac);color:#fff;cursor:pointer;
+  display:grid;place-items:center;box-shadow:var(--sh-3);
+  transition:transform var(--dur-press) var(--ease-out),background-color var(--dur-fast) ease}
+.fab:active{transform:scale(.93)}
+.fab:focus-visible{outline:none;box-shadow:var(--sh-3),0 0 0 4px var(--ac-soft)}
+@media (hover:hover) and (pointer:fine){.fab:hover{background:var(--ac-2)}}
+
+/* ============================================================
+   Folha
+   ============================================================ */
+.scrim{position:absolute;inset:0;z-index:8;background:rgb(28 25 20 / .3);
+  backdrop-filter:blur(2px);animation:fade var(--dur-base) var(--ease-out)}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.sheet{position:absolute;left:0;right:0;bottom:0;z-index:9;background:var(--sf);
+  border-radius:var(--r-xl) var(--r-xl) 0 0;padding:var(--s3) var(--s4) var(--s6);
+  max-height:93%;overflow-y:auto;box-shadow:var(--sh-3);scrollbar-width:none;
+  animation:sheet-up var(--dur-slow) var(--ease-drawer)}
+.sheet::-webkit-scrollbar{display:none}
+@keyframes sheet-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.grip{width:36px;height:4px;border-radius:var(--r-full);background:var(--line-2);
+  margin:0 auto var(--s5)}
+
+/* ============================================================
+   Formulário
+   ============================================================ */
+.field{margin-bottom:var(--s4)}
+.label{display:block;font-size:var(--t-xs);font-weight:600;color:var(--tx-3);
+  letter-spacing:.05em;text-transform:uppercase;margin-bottom:var(--s2)}
+.hint{font-size:var(--t-xs);color:var(--tx-3);line-height:1.5;margin:var(--s2) 0 0}
+input,select,textarea{width:100%;font-family:var(--sans);font-size:var(--t-sm);
+  color:var(--tx);background:var(--sf);border:1px solid var(--line-2);
+  border-radius:var(--r-md);padding:var(--s3);
+  transition:border-color var(--dur-fast) ease,box-shadow var(--dur-fast) ease}
+input[type=number]{font-variant-numeric:tabular-nums}
+input::placeholder{color:var(--tx-3)}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;
+  border-color:var(--ac);box-shadow:0 0 0 3px var(--ac-soft)}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2)}
+
+.seg{display:flex;gap:var(--s1);background:var(--sf-2);padding:3px;border-radius:var(--r-md)}
+.seg button{flex:1;font-size:var(--t-sm);font-weight:500;padding:var(--s2);border:0;
+  border-radius:var(--r-sm);background:transparent;color:var(--tx-2);cursor:pointer;
+  transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) ease}
+.seg button.on{background:var(--sf);color:var(--tx);font-weight:600;box-shadow:var(--sh-1)}
+.seg button:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft)}
+
+.drop{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:var(--s2);min-height:96px;border:1.5px dashed var(--line-2);border-radius:var(--r-md);
+  color:var(--tx-2);font-size:var(--t-sm);cursor:pointer;text-align:center;padding:var(--s4);
+  transition:border-color var(--dur-fast) ease,background-color var(--dur-fast) ease}
+.drop svg{color:var(--tx-3)}
+@media (hover:hover) and (pointer:fine){
+  .drop:hover{border-color:var(--ac-line);background:var(--ac-soft)}
+}
+.adds .add-row{display:grid;grid-template-columns:1fr 100px 30px;gap:var(--s2);
+  margin-bottom:var(--s2)}
+.adds .add-row button{background:none;border:0;color:var(--tx-3);cursor:pointer;
+  border-radius:var(--r-sm);transition:color var(--dur-fast) ease}
+.adds .add-row button:hover{color:var(--ov)}
+.adds .add-row button:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ac-soft)}
+.plan-row{display:grid;grid-template-columns:1fr 112px;gap:var(--s2);margin-bottom:var(--s2)}
+.plan-row input:first-child{border-color:transparent;background:transparent;
+  padding-left:0;font-weight:600}
+.plan-row input:first-child:focus-visible{border-color:var(--ac);background:var(--sf);
+  padding-left:var(--s3)}
+
+/* ============================================================
+   Estados: vazio, carregando, erro
+   ============================================================ */
+.empty{text-align:center;padding:var(--s7) var(--s4);border:1px dashed var(--line-2);
+  border-radius:var(--r-lg)}
+.empty-art{width:44px;height:44px;margin:0 auto var(--s4);border-radius:var(--r-full);
+  background:var(--sf-2);display:grid;place-items:center;color:var(--tx-3)}
+.empty-t{font-family:var(--serif);font-size:var(--t-lg);font-weight:600;
+  letter-spacing:-.01em;margin:0 0 var(--s2)}
+.empty-d{color:var(--tx-2);font-size:var(--t-sm);line-height:1.55;margin:0 auto var(--s4);
+  max-width:30ch}
+
+.sk{background:linear-gradient(90deg,var(--sf-2) 0%,var(--sf-3) 50%,var(--sf-2) 100%);
+  background-size:200% 100%;border-radius:var(--r-sm);animation:sk 1.4s ease-in-out infinite}
+@keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.sk--line{height:12px;margin-bottom:var(--s2)}
+.sk--card{height:112px;border-radius:var(--r-lg);margin-bottom:var(--s3)}
+
+.status{font-size:var(--t-sm);line-height:1.5;color:var(--tx-2);margin-top:var(--s3);
+  display:flex;align-items:flex-start;gap:var(--s2)}
+.status--err{color:var(--ov)}
+.spinner{width:14px;height:14px;flex:none;margin-top:2px;border:2px solid var(--line-2);
+  border-top-color:var(--ac);border-radius:var(--r-full);animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ============================================================
+   Entrada de tela e stagger
+   ============================================================ */
+.enter{animation:enter var(--dur-base) var(--ease-out) both}
+@keyframes enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.stagger>*{animation:enter var(--dur-base) var(--ease-out) both}
+.stagger>*:nth-child(1){animation-delay:0ms}
+.stagger>*:nth-child(2){animation-delay:40ms}
+.stagger>*:nth-child(3){animation-delay:80ms}
+.stagger>*:nth-child(4){animation-delay:120ms}
+.stagger>*:nth-child(5){animation-delay:160ms}
+.stagger>*:nth-child(n+6){animation-delay:200ms}
+
+@media (prefers-reduced-motion:reduce){
+  #app *,#app *::before,#app *::after{
+    animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important}
+  .sheet{animation:fade var(--dur-fast) ease}
+  .btn:active,.cat:active,.fab:active{transform:none}
+}
+</style>
+
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const KEY="casamento:v3";
+const brl=n=>n==null?"—":n.toLocaleString("pt-BR",{style:"currency",currency:"BRL",maximumFractionDigits:0});
+const brl2=n=>n.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+const hoje=()=>new Date().toISOString().slice(0,10);
+const uid=()=>Math.random().toString(36).slice(2,9);
+const esc=s=>String(s??"").replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));
+const dBR=d=>d?d.split("-").reverse().join("/"):"";
+
+const ICON={
+  check:'<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 9 17.5 20 6.5"/></svg>',
+  back:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l-6 6 6 6"/></svg>',
+  file:'<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13 3v6h6"/></svg>',
+  doc:'<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 12h16M4 19h9"/></svg>',
+  cal:'<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>'
+};
+
+const PLANO_BASE=[["espaco","Espaço"],["buffet","Buffet"],["openbar","Open bar"],
+  ["decoracao","Decoração"],["ilum","Iluminação decorativa"],["som","Som e luz de pista"],
+  ["dj","DJ"],["foto","Fotografia"],["video","Filmagem"],["doces","Doces"],
+  ["bemcasado","Bem-casado"],["cerimonial","Cerimonial"],["espumante","Espumantes"],
+  ["whisky","Whisky"],["kit","Kit toalete"],["extra","Extras"]];
+const FAIXA_PP={buffet:[50,1500],openbar:[20,400],doces:[5,150]};
+
+let S=null,tela="home",catAtual=null;
+
+/* ---------- persistência ---------- */
+const salvar=async()=>{try{await window.storage.set(KEY,JSON.stringify(S))}catch(e){console.error(e)}};
+async function iniciar(){
+  esqueleto();
+  try{const r=await window.storage.get(KEY);if(r&&r.value)S=JSON.parse(r.value)}catch(e){}
+  await new Promise(r=>setTimeout(r,260));           // evita flash do esqueleto
+  if(!S){onboarding();return}
+  $("nav").hidden=false;$("fab").hidden=false;render();ir("home");
+}
+function esqueleto(){
+  $("s-boot").innerHTML=`<div class="sk sk--line" style="width:42%;height:26px;margin-bottom:var(--s5)"></div>
+    <div class="sk sk--card"></div><div class="sk sk--line" style="width:60%"></div>
+    <div class="sk sk--line" style="width:35%"></div>`;
+  $("s-boot").hidden=false;
+}
+
+/* ---------- cálculo ---------- */
+const efetivo=b=>(+b.valor||0)+(b.adicionais||[]).reduce((a,x)=>a+(+x.valor||0),0);
+const blocos=n=>n.blocos||[];
+const negsDe=c=>S.negs.filter(n=>blocos(n).some(b=>b.cat===c));
+const valorNa=(n,c)=>blocos(n).filter(b=>b.cat===c).reduce((a,b)=>a+efetivo(b),0);
+const totalNeg=n=>blocos(n).reduce((a,b)=>a+efetivo(b),0);
+const fechadaDe=c=>negsDe(c).find(n=>n.estado==="fechado");
+
+function projecao(){
+  let contratado=0,cotado=0,semCot=0;
+  S.plano.forEach(c=>{
+    const f=fechadaDe(c.id);
+    if(f){contratado+=valorNa(f,c.id);return}
+    const vs=negsDe(c.id).filter(n=>n.estado!=="descartado").map(n=>valorNa(n,c.id));
+    vs.length?cotado+=Math.min(...vs):semCot+=+c.valor||0;
+  });
+  const plano=S.plano.reduce((a,c)=>a+(+c.valor||0),0);
+  return{plano,contratado,cotado,semCot,total:contratado+cotado+semCot};
+}
+
+function parcelasDe(n){
+  const p=n.pag||{},tot=totalNeg(n),out=[];
+  if(!p.dataEntrada)return out;
+  const ent=p.entrada||(p.entradaPct?tot*p.entradaPct/100:0);
+  if(ent>0)out.push({rot:"Entrada",data:p.dataEntrada,valor:ent});
+  const k=p.parcelas||0,resto=tot-ent;
+  if(k>0&&resto>0){
+    const v=resto/k,[y,m,d]=p.dataEntrada.split("-").map(Number);
+    for(let i=1;i<=k;i++)
+      out.push({rot:`${i} de ${k}`,data:new Date(Date.UTC(y,m-1+i,d)).toISOString().slice(0,10),valor:v});
+  }
+  return out;
+}
+const todasParcelas=()=>S.negs.filter(n=>n.estado==="fechado")
+  .flatMap(n=>parcelasDe(n).map((p,i)=>({...p,forn:n.forn,neg:n.id,idx:i,pago:(n.pagos||[]).includes(i)})));
+const mesDe=d=>d.slice(0,7);
+const nomeMes=m=>new Date(m+"-02").toLocaleDateString("pt-BR",{month:"long",year:"numeric"});
+
+/* ---------- validação, na língua da usuária ---------- */
+function checar(n){
+  const o=[];
+  if(n.validade&&n.validade<hoje())
+    o.push(["info",`Proposta venceu em ${dBR(n.validade)}. Peça um preço atualizado.`]);
+  if(!n.validade&&n.validadeTexto)
+    o.push(["aviso",`O prazo veio como “${n.validadeTexto}”. Confirme até que dia vale.`]);
+  blocos(n).forEach(b=>{
+    if(b.modo==="pp"&&b.unit&&b.qtd){
+      const c=b.unit*b.qtd;
+      if(Math.abs(c-b.valor)>1)
+        o.push(["erro",`A conta não fecha: ${brl2(b.unit)} × ${b.qtd} dá ${brl(c)}, não ${brl(b.valor)}.`]);
+      const f=FAIXA_PP[b.cat];
+      if(f&&!(b.unit>=f[0]&&b.unit<=f[1]))
+        o.push(["erro",`${brl2(b.unit)} por pessoa está fora do usual. Confira se digitou certo.`]);
+    }
+    const ad=(b.adicionais||[]).filter(a=>a.valor>0).reduce((a,x)=>a+x.valor,0);
+    if(b.valor&&ad/b.valor>.15)
+      o.push(["aviso",`Taxas e extras somam ${Math.round(ad/b.valor*100)}% além do preço anunciado.`]);
+  });
+  parcelasDe(n).forEach(p=>{
+    if(p.data>S.evento.data)o.push(["erro",`Uma parcela cai em ${dBR(p.data)}, depois do casamento.`]);
+  });
+  if(n.estado==="fechado"&&!parcelasDe(n).length)
+    o.push(["aviso","Contratado, mas sem entrada e parcelas. Não entra no calendário."]);
+  return o;
+}
+function alavancas(n){
+  const a=[];
+  if(n.validade&&n.validade<hoje())a.push("Proposta vencida: peça reenvio e negocie o preço de hoje.");
+  if(blocos(n).flatMap(b=>b.adicionais||[]).some(x=>x.valor<0))
+    a.push("Já deram desconto uma vez. Costuma dar para repetir.");
+  const h=n.historico||[];
+  if(h.length&&h[0].efetivo>totalNeg(n))
+    a.push(`Já cedeu ${Math.round((1-totalNeg(n)/h[0].efetivo)*100)}% desde a primeira proposta.`);
+  if(n.notas)a.push(n.notas);
+  return a;
+}
+
+/* ---------- onboarding ---------- */
+function onboarding(){
+  $("s-onb").innerHTML=`
+    <div class="head">
+      <h1 class="title">Seu casamento</h1>
+      <p class="sub">Três informações e quanto você pretende gastar em cada coisa.
+        Nada aqui é definitivo — dá para ajustar a qualquer momento.</p>
+    </div>
+    <div class="pair">
+      <div class="field"><label class="label" for="o-data">Data</label>
+        <input type="date" id="o-data" value="2027-06-19"></div>
+      <div class="field"><label class="label" for="o-conv">Convidados</label>
+        <input type="number" id="o-conv" value="150" min="1"></div>
+    </div>
+    <div class="field">
+      <span class="label">Plano por categoria</span>
+      <div id="o-plano">${PLANO_BASE.map(([id,nome])=>`
+        <div class="plan-row">
+          <input type="text" value="${nome}" data-nome="${id}" aria-label="Nome da categoria">
+          <input type="number" value="" placeholder="R$ 0" data-val="${id}" aria-label="Valor planejado">
+        </div>`).join("")}</div>
+      <p class="hint">Deixe em branco o que não vai ter. Você pode renomear qualquer linha.</p>
+    </div>
+    <div class="card">
+      <div class="split"><span class="mu">Total do plano</span>
+        <span class="display" style="font-size:var(--t-2xl)" id="o-total">R$ 0</span></div>
+    </div>
+    <button class="btn btn--primary" id="o-ok">Começar</button>`;
+  const soma=()=>$("o-total").textContent=brl(
+    [...$("o-plano").querySelectorAll("[data-val]")].reduce((a,i)=>a+(+i.value||0),0));
+  $("o-plano").addEventListener("input",soma);
+  $("o-ok").addEventListener("click",async()=>{
+    S={evento:{data:$("o-data").value,convidados:+$("o-conv").value||0},
+       plano:PLANO_BASE.map(([id])=>({id,
+         nome:$("o-plano").querySelector(`[data-nome="${id}"]`).value,
+         valor:+$("o-plano").querySelector(`[data-val="${id}"]`).value||0})),
+       negs:[]};
+    await salvar();$("nav").hidden=false;$("fab").hidden=false;render();ir("home");
+  });
+  ir("onb");
+}
+
+/* ---------- Início ---------- */
+function home(){
+  const p=projecao(),gap=p.total-p.plano;
+  const dias=Math.round((new Date(S.evento.data)-new Date(hoje()))/864e5);
+  const esc0=Math.max(p.total,p.plano)||1,w=v=>Math.max(0,v/esc0*100);
+  const mes=todasParcelas().filter(x=>mesDe(x.data)===hoje().slice(0,7)&&!x.pago)
+    .sort((a,b)=>a.data.localeCompare(b.data));
+  const venc=S.negs.filter(n=>n.validade&&n.validade<hoje()&&n.estado!=="fechado");
+  const furos=S.plano.map(c=>{
+    const f=fechadaDe(c.id),vs=negsDe(c.id).map(n=>valorNa(n,c.id));
+    if(!f&&!vs.length)return null;
+    const real=f?valorNa(f,c.id):Math.min(...vs);
+    return real>(c.valor||0)?{c,real,d:real-(c.valor||0)}:null;
+  }).filter(Boolean).sort((a,b)=>b.d-a.d).slice(0,4);
+
+  $("s-home").innerHTML=`
+    <div class="head">
+      <div class="display">${dias>0?dias:0}<span style="font-size:var(--t-xl)"> dias</span></div>
+      <p class="sub">${dBR(S.evento.data)} · ${S.evento.convidados} convidados</p>
+    </div>
+    ${!S.negs.length?vazioHome():`
+    <div class="stagger">
+      <div class="card">
+        <p class="eyebrow">Projeção</p>
+        <div class="split">
+          <span class="display" style="font-size:var(--t-2xl);${gap>0?"color:var(--ov)":""}">${brl(p.total)}</span>
+          <span class="mu num">plano ${brl(p.plano)}</span>
+        </div>
+        <div class="gauge">
+          <i class="g-done" style="width:${w(p.contratado)}%"></i>
+          <i class="g-open" style="width:${w(p.cotado+p.semCot)}%"></i>
+          ${gap>0?`<i class="g-over" style="width:${w(gap)}%"></i>`:""}
+          ${gap>0?`<span class="gauge-mark" style="left:${w(p.plano)}%"></span>`:""}
+        </div>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--ac)"></i>Contratado <b>${brl(p.contratado)}</b></span>
+          <span><i class="swatch" style="background:var(--ac);opacity:.28"></i>A contratar <b>${brl(p.cotado+p.semCot)}</b></span>
+        </div>
+      </div>
+
+      ${gap>0
+        ?`<div class="note">Você está <b>${brl(gap)} acima do plano</b>, ou ${Math.round(gap/p.plano*100)}%.
+            Isso já considera o orçamento mais barato de cada categoria.</div>`
+        :`<div class="note note--good">Dentro do plano, com <b>${brl(-gap)}</b> de folga.</div>`}
+
+      ${venc.length?`<div class="note note--warn">
+        ${venc.length===1?"Uma proposta venceu":`${venc.length} propostas venceram`}:
+        ${venc.map(n=>esc(n.forn)).join(", ")}. Peça reenvio antes de comparar.</div>`:""}
+
+      ${mes.length?`<div class="card">
+        <p class="eyebrow">Para pagar este mês</p>
+        ${mes.map(x=>`<div class="line">
+          <div class="l-main">${esc(x.forn)}<span class="l-sub">${x.rot} · dia ${x.data.slice(8)}</span></div>
+          <div class="l-val">${brl(x.valor)}</div></div>`).join("")}
+      </div>`:""}
+
+      ${furos.length?`<div class="card">
+        <p class="eyebrow">Onde o plano furou</p>
+        ${furos.map(f=>`<div class="line">
+          <div class="l-main">${esc(f.c.nome)}<span class="l-sub">planejado ${brl(f.c.valor)} · real ${brl(f.real)}</span></div>
+          <div class="l-val over">+${brl(f.d)}</div></div>`).join("")}
+      </div>`:""}
+    </div>`}`;
+  if($("home-add"))$("home-add").addEventListener("click",()=>folha());
+}
+const vazioHome=()=>`
+  <div class="empty enter">
+    <div class="empty-art">${ICON.file}</div>
+    <p class="empty-t">Nenhum orçamento ainda</p>
+    <p class="empty-d">Assim que chegar a primeira proposta, jogue o PDF ou o print aqui.
+      A partir de dois, começa a valer a comparação.</p>
+    <button class="btn btn--primary" id="home-add" style="width:auto;margin:0 auto">Adicionar o primeiro</button>
+  </div>`;
+
+/* ---------- Categorias ---------- */
+function cats(){
+  const p=projecao(),fechadas=S.plano.filter(c=>fechadaDe(c.id)).length;
+  $("s-cats").innerHTML=`
+    <div class="head">
+      <h1 class="title">Categorias</h1>
+      <p class="sub">${fechadas} de ${S.plano.length} fechadas · plano de ${brl(p.plano)}</p>
+    </div>
+    <div class="stagger">${S.plano.map(c=>{
+      const f=fechadaDe(c.id),ns=negsDe(c.id);
+      const real=f?valorNa(f,c.id):(ns.length?Math.min(...ns.map(n=>valorNa(n,c.id))):null);
+      const d=real==null?null:real-(c.valor||0);
+      const mark=f?`<span class="cat-mark">${ICON.check}</span>`
+        :ns.length?`<span class="cat-mark ${d>0?"cat-mark--over":"cat-mark--cot"}">${ns.length}</span>`
+        :`<span class="cat-mark cat-mark--open"></span>`;
+      return `<button class="cat ${ns.length?"":"cat--empty"}" data-c="${c.id}">
+        ${mark}
+        <span class="cat-body">
+          <span class="cat-name">${esc(c.nome)}</span>
+          <span class="cat-sub">${f?esc(f.forn)
+            :ns.length?`${ns.length} orçamento${ns.length>1?"s":""}`:"só o plano"}</span>
+        </span>
+        <span class="cat-val">${brl(real??c.valor)}
+          ${real==null?`<span class="cat-delta" style="color:var(--tx-3)">planejado</span>`
+            :`<span class="cat-delta ${d<=0?"cat-delta--ok":""}">${d>0?"+":""}${brl(d)}</span>`}
+        </span></button>`;
+    }).join("")}</div>`;
+  $("s-cats").querySelectorAll("[data-c]").forEach(b=>
+    b.addEventListener("click",()=>abrirCat(b.dataset.c)));
+}
+
+/* ---------- Comparação ---------- */
+function abrirCat(id){
+  catAtual=id;
+  const c=S.plano.find(x=>x.id===id);
+  const ns=negsDe(id).slice().sort((a,b)=>valorNa(a,id)-valorNa(b,id));
+  const menor=ns.length?valorNa(ns[0],id):null;
+
+  $("s-cat").innerHTML=`
+    <button class="link" id="volta">${ICON.back} Categorias</button>
+    <div class="head">
+      <h1 class="title">${esc(c.nome)}</h1>
+      <p class="sub">Planejado ${brl(c.valor)}${ns.length?` · ${ns.length} orçamento${ns.length>1?"s":""}`:""}</p>
+    </div>
+    ${menor!=null?(menor>(c.valor||0)
+      ?`<div class="note">Mesmo o mais barato fica <b>${brl(menor-(c.valor||0))} acima</b> do plano.</div>`
+      :`<div class="note note--good">O mais barato cabe no plano, com <b>${brl((c.valor||0)-menor)}</b> de folga.</div>`):""}
+    <div class="stagger">
+    ${ns.length?ns.map((n,i)=>{
+      const bs=blocos(n).filter(b=>b.cat===id),tot=valorNa(n,id),full=totalNeg(n);
+      const pp=S.evento.convidados?tot/S.evento.convidados:null;
+      const probs=checar(n).filter(x=>x[0]!=="info"),alv=alavancas(n);
+      const barato=i===0&&ns.length>1&&n.estado!=="fechado";
+      return `<div class="quote ${n.estado==="fechado"?"quote--won":""}">
+        ${n.estado==="fechado"?`<span class="tag">Contratado</span>`
+          :barato?`<span class="tag" style="background:var(--sf-2);color:var(--tx-2)">Mais barato</span>`:""}
+        <div class="q-top">
+          <div style="min-width:0">
+            <div class="q-name">${esc(n.forn)}</div>
+            <div class="q-meta">${n.validade
+              ? (n.validade<hoje()?`Venceu em ${dBR(n.validade)}`:`Válido até ${dBR(n.validade)}`)
+              : (n.validadeTexto?esc(n.validadeTexto):"Sem prazo informado")}</div>
+          </div>
+          <div class="q-price"><span class="p">${brl(tot)}</span>
+            ${pp?`<span class="pp">${brl2(pp)} por pessoa</span>`:""}</div>
+        </div>
+        <div class="ledger">
+          ${bs.map(b=>`
+            <div class="row"><span>${b.modo==="pp"
+              ?`${brl2(b.unit)} × ${b.qtd} convidados`:"Valor anunciado"}</span>
+              <span>${brl(b.valor)}</span></div>
+            ${(b.adicionais||[]).map(a=>`<div class="row row--add">
+              <span>${esc(a.rotulo)}</span>
+              <span>${a.valor<0?"−":"+"}${brl(Math.abs(a.valor))}</span></div>`).join("")}`).join("")}
+          ${full!==tot?`<div class="row row--add"><span>Parte de outra categoria</span>
+            <span>−${brl(full-tot)}</span></div>`:""}
+          <div class="row row--sum"><span>Total real</span><span>${brl(tot)}</span></div>
+        </div>
+        ${probs.length?`<div class="flag ${probs.some(x=>x[0]==="erro")?"flag--bad":""}">
+          <ul>${probs.map(x=>`<li>${esc(x[1])}</li>`).join("")}</ul></div>`:""}
+        ${alv.length?`<div class="flag"><b>Dá para negociar</b>
+          <ul>${alv.map(a=>`<li>${esc(a)}</li>`).join("")}</ul></div>`:""}
+        <div class="btn-row">
+          <button class="btn btn--ghost btn--sm" data-ed="${n.id}">Revisar</button>
+          <button class="btn ${n.estado==="fechado"?"btn--ghost":"btn--primary"} btn--sm"
+            data-fe="${n.id}">${n.estado==="fechado"?"Desfazer":"Contratar"}</button>
+        </div></div>`;
+    }).join(""):`
+      <div class="empty">
+        <div class="empty-art">${ICON.doc}</div>
+        <p class="empty-t">Nada cotado ainda</p>
+        <p class="empty-d">Peça três orçamentos antes de decidir. Com dois você não enxerga
+          a faixa de preço, só a diferença entre eles.</p>
+        <button class="btn btn--primary" id="cat-add" style="width:auto;margin:0 auto">
+          Adicionar orçamento</button>
+      </div>`}
+    </div>
+    ${ns.length?`<button class="btn btn--ghost" id="cat-add" style="margin-top:var(--s3)">
+      Mais um orçamento em ${esc(c.nome)}</button>`:""}`;
+
+  $("volta").addEventListener("click",()=>ir("cats"));
+  if($("cat-add"))$("cat-add").addEventListener("click",()=>folha(null,id));
+  $("s-cat").querySelectorAll("[data-ed]").forEach(b=>
+    b.addEventListener("click",()=>folha(S.negs.find(n=>n.id===b.dataset.ed))));
+  $("s-cat").querySelectorAll("[data-fe]").forEach(b=>
+    b.addEventListener("click",async()=>{
+      const n=S.negs.find(x=>x.id===b.dataset.fe),virar=n.estado!=="fechado";
+      negsDe(id).forEach(x=>{if(x.estado==="fechado")x.estado="cotando"});
+      n.estado=virar?"fechado":"cotando";
+      await salvar();render();abrirCat(id);
+    }));
+  ir("cat");
+}
+
+/* ---------- Pagamentos ---------- */
+function pay(){
+  const todas=todasParcelas().sort((a,b)=>a.data.localeCompare(b.data));
+  const meses=[...new Set(todas.map(p=>mesDe(p.data)))];
+  const falta=todas.filter(p=>!p.pago).reduce((a,p)=>a+p.valor,0);
+  const pago=todas.filter(p=>p.pago).reduce((a,p)=>a+p.valor,0);
+  const depois=todas.filter(p=>p.data>S.evento.data);
+  const semPlano=S.negs.filter(n=>n.estado==="fechado"&&!parcelasDe(n).length);
+
+  $("s-pay").innerHTML=`
+    <div class="head">
+      <h1 class="title">Pagamentos</h1>
+      <p class="sub">Só do que já está contratado.</p>
+    </div>
+    ${todas.length?`
+      <div class="card">
+        <p class="eyebrow">Ainda falta pagar</p>
+        <div class="split">
+          <span class="display" style="font-size:var(--t-2xl)">${brl(falta)}</span>
+          <span class="mu num">${brl(pago)} já pago</span>
+        </div>
+      </div>
+      ${depois.length?`<div class="note">${depois.length===1?"Uma parcela cai":`${depois.length} parcelas caem`}
+        depois do casamento. Confirme com o fornecedor.</div>`:""}
+      ${semPlano.length?`<div class="note note--warn">
+        ${semPlano.map(n=>esc(n.forn)).join(", ")} sem entrada e parcelas preenchidas.</div>`:""}
+      ${meses.map(m=>{
+        const it=todas.filter(p=>mesDe(p.data)===m);
+        return `<div class="month"><span class="m-name">${nomeMes(m)}</span>
+          <span class="m-sum">${brl(it.reduce((a,p)=>a+p.valor,0))}</span></div>
+          ${it.map(p=>`<button class="pmt ${p.pago?"pmt--paid":""}" data-pg="${p.neg}:${p.idx}"
+            aria-pressed="${p.pago}">
+            <span class="pmt-box">${p.pago?ICON.check:""}</span>
+            <span class="pmt-body"><span class="pmt-name">${esc(p.forn)}</span>
+              <span class="pmt-sub">${p.rot} · ${dBR(p.data)}</span></span>
+            <span class="pmt-val">${brl(p.valor)}</span></button>`).join("")}`;
+      }).join("")}
+    `:`<div class="empty">
+      <div class="empty-art">${ICON.cal}</div>
+      <p class="empty-t">Sem parcelas ainda</p>
+      <p class="empty-d">Ao contratar um fornecedor, informe a entrada e o número de parcelas.
+        O calendário aparece aqui e some da sua cabeça.</p>
+    </div>`}`;
+
+  $("s-pay").querySelectorAll("[data-pg]").forEach(el=>el.addEventListener("click",async()=>{
+    const [id,i]=el.dataset.pg.split(":"),n=S.negs.find(x=>x.id===id),k=+i;
+    n.pagos=n.pagos||[];
+    n.pagos.includes(k)?n.pagos.splice(n.pagos.indexOf(k),1):n.pagos.push(k);
+    await salvar();pay();
+  }));
+}
+
+/* ---------- folha de orçamento ---------- */
+const PROMPT=(cats,conv)=>`Você extrai dados de propostas de fornecedores de casamento no Brasil.
+Responda APENAS com JSON válido, sem markdown, sem crase, sem explicação.
+
+{"fornecedor":string|null,"categoria":string|null,"modo":"por_pessoa"|"total"|null,
+"valor_unitario":number|null,"quantidade":number|null,"valor_total":number|null,
+"adicionais":[{"rotulo":string,"valor":number}],"validade":"YYYY-MM-DD"|null,
+"validade_texto":string|null,"pagamento":string|null,"datas_parcela":["YYYY-MM-DD"],
+"observacao_negociacao":string|null,"ambiguidades":[string],"confianca":number}
+
+CATEGORIA: exatamente uma desta lista: ${cats}. Se cobrir várias, escolha a de maior
+valor e cite as outras em ambiguidades.
+
+REGRA PRINCIPAL: nunca infira. Campo sem informação explícita é null.
+
+BASE E ADICIONAIS:
+- "R$ 310 por convidado" com 200 convidados: modo "por_pessoa", valor_unitario 310,
+  quantidade 200, valor_total null. NÃO multiplique.
+- NUNCA some imposto, frete, logística, equipe, taxa ou hora extra ao valor base.
+  Cada um vira uma entrada em adicionais. Ex.: "ISS 5%", "Logística Petrópolis–Rio",
+  "2 horas extras (10%)", "4h extras de equipe".
+- Desconto é adicional NEGATIVO. Cortesia entra com valor 0.
+- "12x de R$ 2.400" não é o total. "R$ 28.800,00" é 28800.00.
+
+observacao_negociacao: sinal de espaço para negociar, em uma frase.
+ambiguidades: total que não bate, dígito sobrando, parcela após o casamento,
+duas quantidades de convidados, valor "a partir de".
+
+NUNCA copie nome, e-mail, telefone ou CPF dos noivos, nem dados bancários ou Pix
+do fornecedor. Nome comercial do fornecedor pode.
+
+Casamento em ${S.evento.data}, ${conv} convidados (use só para plausibilidade).`;
+
+function folha(neg,catPre){
+  const novo=!neg;
+  const b0=neg?blocos(neg)[0]:{cat:catPre||S.plano[0].id,modo:"total",qtd:S.evento.convidados,adicionais:[]};
+  let adds=JSON.parse(JSON.stringify(b0.adicionais||[]));
+  const fechar=()=>{$("scrim").hidden=true;$("sheet").hidden=true};
+
+  $("scrim").hidden=false;$("sheet").hidden=false;
+  $("sheet").innerHTML=`
+    <div class="grip"></div>
+    <h2 class="title" style="font-size:var(--t-lg)">${novo?"Novo orçamento":"Revisar "+esc(neg.forn)}</h2>
+    <p class="sub" style="margin-bottom:var(--s5)">${novo
+      ?"Imposto, frete e equipe entram como adicionais, nunca no valor principal. É o que revela o preço real."
+      :"A versão anterior fica guardada, para calcular quanto ele já cedeu."}</p>
+
+    <div class="field" hidden>
+      <span class="label">Importar do arquivo</span>
+      <label class="drop" for="f-file">${ICON.file}
+        <span id="imp-lbl">PDF, print ou foto do orçamento</span></label>
+      <input type="file" id="f-file" hidden
+        accept="application/pdf,image/png,image/jpeg,image/webp">
+      <div class="status" id="imp-st" hidden></div>
+    </div>
+
+    <div class="field"><label class="label" for="f-forn">Fornecedor</label>
+      <input type="text" id="f-forn" value="${esc(neg?.forn||"")}" placeholder="Buffet Vila Real"></div>
+    <div class="field"><label class="label" for="f-cat">Categoria</label>
+      <select id="f-cat">${S.plano.map(c=>
+        `<option value="${c.id}"${c.id===b0.cat?" selected":""}>${esc(c.nome)}</option>`).join("")}</select></div>
+
+    <div class="field"><span class="label">O valor anunciado é</span>
+      <div class="seg" id="f-modo">
+        <button type="button" data-m="total" class="${b0.modo!=="pp"?"on":""}">Total</button>
+        <button type="button" data-m="pp" class="${b0.modo==="pp"?"on":""}">Por pessoa</button>
+      </div></div>
+    <div class="pair">
+      <div class="field"><label class="label" for="f-val">Valor</label>
+        <input type="number" id="f-val" step="0.01" placeholder="0,00"
+          value="${b0.modo==="pp"?(b0.unit??""):(b0.valor??"")}"></div>
+      <div class="field" id="f-qtdw"${b0.modo==="pp"?"":" hidden"}>
+        <label class="label" for="f-qtd">Convidados</label>
+        <input type="number" id="f-qtd" value="${b0.qtd??S.evento.convidados}"></div>
+    </div>
+
+    <div class="field"><span class="label">Adicionais e descontos</span>
+      <div class="adds" id="f-adds"></div>
+      <button class="btn btn--ghost btn--sm" id="f-add" style="width:auto">+ linha</button>
+      <p class="hint">ISS, frete, hora extra, equipe. Desconto entra com sinal negativo.</p></div>
+
+    <div class="pair">
+      <div class="field"><label class="label" for="f-val2">Válido até</label>
+        <input type="date" id="f-val2" value="${neg?.validade||""}"></div>
+      <div class="field"><label class="label" for="f-valt">Ou em texto</label>
+        <input type="text" id="f-valt" value="${esc(neg?.validadeTexto||"")}" placeholder="60 dias"></div>
+    </div>
+
+    <div class="field"><span class="label">Como vai pagar</span>
+      <div class="pair">
+        <input type="number" id="f-ent" step="0.01" placeholder="Entrada R$"
+          value="${neg?.pag?.entrada??""}" aria-label="Entrada em reais">
+        <input type="number" id="f-entp" step="0.1" placeholder="ou % de entrada"
+          value="${neg?.pag?.entradaPct??""}" aria-label="Entrada em percentual">
+      </div>
+      <div class="pair" style="margin-top:var(--s2)">
+        <input type="date" id="f-entd" value="${neg?.pag?.dataEntrada||""}" aria-label="Data da entrada">
+        <input type="number" id="f-parc" placeholder="nº de parcelas"
+          value="${neg?.pag?.parcelas??""}" aria-label="Número de parcelas">
+      </div>
+      <p class="hint">As parcelas começam no mês seguinte à entrada.</p></div>
+
+    <div class="field"><label class="label" for="f-notas">Anotação para negociar</label>
+      <input type="text" id="f-notas" value="${esc(neg?.notas||"")}"
+        placeholder="disse que é o valor mínimo"></div>
+
+    <div class="btn-row">
+      <button class="btn btn--ghost" id="f-x">Cancelar</button>
+      <button class="btn btn--primary" id="f-ok">Salvar</button>
+    </div>`;
+
+  const desenhaAdds=()=>{
+    $("f-adds").innerHTML=adds.map((a,i)=>`<div class="add-row">
+      <input type="text" value="${esc(a.rotulo)}" data-r="${i}" placeholder="ISS 5%" aria-label="Descrição">
+      <input type="number" value="${a.valor||0}" data-v="${i}" step="0.01" aria-label="Valor">
+      <button type="button" data-x="${i}" aria-label="Remover">×</button></div>`).join("");
+    $("f-adds").querySelectorAll("[data-r]").forEach(i=>
+      i.addEventListener("input",e=>adds[+e.target.dataset.r].rotulo=e.target.value));
+    $("f-adds").querySelectorAll("[data-v]").forEach(i=>
+      i.addEventListener("input",e=>adds[+e.target.dataset.v].valor=+e.target.value||0));
+    $("f-adds").querySelectorAll("[data-x]").forEach(b=>
+      b.addEventListener("click",()=>{adds.splice(+b.dataset.x,1);desenhaAdds()}));
+  };
+  desenhaAdds();
+
+  $("f-modo").addEventListener("click",e=>{
+    const b=e.target.closest("button");if(!b)return;
+    $("f-modo").querySelectorAll("button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");$("f-qtdw").hidden=b.dataset.m!=="pp";
+  });
+  $("f-add").addEventListener("click",()=>{adds.push({rotulo:"",valor:0});desenhaAdds()});
+  $("f-x").addEventListener("click",fechar);
+  $("f-file").addEventListener("change",e=>{if(e.target.files[0])importar(e.target.files[0],desenhaAdds,v=>adds=v)});
+  $("f-ok").addEventListener("click",async()=>{
+    const forn=$("f-forn").value.trim();
+    if(!forn){$("f-forn").focus();return}
+    const modo=$("f-modo").querySelector(".on").dataset.m;
+    const v=+$("f-val").value||0,q=+$("f-qtd").value||0;
+    const bloco={cat:$("f-cat").value,modo,unit:modo==="pp"?v:null,qtd:modo==="pp"?q:null,
+      valor:modo==="pp"?v*q:v,adicionais:adds.filter(a=>a.rotulo||a.valor)};
+    const campos={forn,validade:$("f-val2").value||null,validadeTexto:$("f-valt").value||null,
+      notas:$("f-notas").value||null,
+      pag:{entrada:+$("f-ent").value||null,entradaPct:+$("f-entp").value||null,
+           dataEntrada:$("f-entd").value||null,parcelas:+$("f-parc").value||null}};
+    if(novo)S.negs.push({id:uid(),estado:"cotando",blocos:[bloco],historico:[],pagos:[],...campos});
+    else{neg.historico=[...(neg.historico||[]),{data:hoje(),efetivo:totalNeg(neg)}];
+         Object.assign(neg,campos);neg.blocos=[bloco]}
+    await salvar();fechar();render();
+    tela==="cat"&&catAtual?abrirCat(catAtual):ir(tela);
+  });
+}
+
+async function importar(file,redesenhar,setAdds){
+  const st=$("imp-st");st.hidden=false;st.className="status";
+  st.innerHTML=`<span class="spinner"></span><span>Lendo ${esc(file.name)}…</span>`;
+  $("imp-lbl").textContent=file.name;
+  try{
+    const b64=await new Promise((res,rej)=>{const r=new FileReader();
+      r.onload=()=>res(r.result.split(",")[1]);r.onerror=()=>rej(new Error("não consegui abrir o arquivo"));
+      r.readAsDataURL(file)});
+    const parte=file.type==="application/pdf"
+      ?{type:"document",source:{type:"base64",media_type:"application/pdf",data:b64}}
+      :{type:"image",source:{type:"base64",media_type:file.type,data:b64}};
+    const r=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",
+        content:[parte,{type:"text",text:PROMPT(S.plano.map(c=>c.id).join(", "),S.evento.convidados)
+          +"\n\nExtraia a proposta do documento acima."}]}]})});
+    const data=await r.json();
+    if(data.error)throw new Error(data.error.message||"erro na leitura");
+    const raw=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+    const a=raw.indexOf("{"),z=raw.lastIndexOf("}");
+    if(a<0||z<0)throw new Error("não veio um resultado legível");
+    const d=JSON.parse(raw.slice(a,z+1));
+
+    if(d.fornecedor)$("f-forn").value=d.fornecedor;
+    if(d.categoria&&S.plano.some(c=>c.id===d.categoria))$("f-cat").value=d.categoria;
+    const pp=d.modo==="por_pessoa";
+    $("f-modo").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.m===(pp?"pp":"total")));
+    $("f-qtdw").hidden=!pp;
+    $("f-val").value=pp?(d.valor_unitario??""):(d.valor_total??d.valor_unitario??"");
+    if(pp&&d.quantidade)$("f-qtd").value=d.quantidade;
+    if(Array.isArray(d.adicionais)&&d.adicionais.length){
+      setAdds(d.adicionais.map(x=>({rotulo:x.rotulo||"",valor:+x.valor||0})));redesenhar();
+    }
+    if(d.validade)$("f-val2").value=d.validade;
+    if(d.validade_texto)$("f-valt").value=d.validade_texto;
+    if(Array.isArray(d.datas_parcela)&&d.datas_parcela[0]&&!$("f-entd").value)
+      $("f-entd").value=d.datas_parcela[0];
+    if(d.observacao_negociacao)$("f-notas").value=d.observacao_negociacao;
+
+    const av=[...(d.ambiguidades||[])];
+    if((d.confianca??1)<.7)av.unshift("Leitura pouco confiável deste documento.");
+    st.innerHTML=`<span>Preenchido. Confira valor, convidados e adicionais antes de salvar.
+      ${av.length?`<span class="flag" style="display:block">
+        <ul>${av.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></span>`:""}</span>`;
+  }catch(e){
+    console.error(e);
+    st.className="status status--err";
+    st.innerHTML=`<span>Não consegui ler este arquivo (${esc(e.message)}).
+      Preencha os campos à mão — leva um minuto.</span>`;
+  }
+}
+
+/* ---------- navegação ---------- */
+function render(){home();cats();pay()}
+function ir(n){
+  tela=n;
+  ["boot","onb","home","cats","cat","pay"].forEach(x=>$("s-"+x).hidden=x!==n);
+  $("screens").scrollTop=0;
+  document.querySelectorAll(".tb").forEach(t=>
+    t.classList.toggle("is-on",t.dataset.go===(n==="cat"?"cats":n)));
+}
+document.querySelectorAll(".tb").forEach(t=>t.addEventListener("click",()=>ir(t.dataset.go)));
+$("fab").addEventListener("click",()=>folha());
+$("scrim").addEventListener("click",()=>{$("scrim").hidden=true;$("sheet").hidden=true});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&!$("sheet").hidden){$("scrim").hidden=true;$("sheet").hidden=true}
+});
+
+iniciar();
+})();
+</script>
+
+</body>
+</html>
