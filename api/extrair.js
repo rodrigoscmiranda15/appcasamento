@@ -2,8 +2,12 @@
 // A chave nunca sai do servidor. Painel da Vercel:
 //   Settings → Environment Variables → GEMINI_API_KEY
 
-const MODELO = "gemini-3.6-flash";   // 3.7 e 3.8 Flash também servem: mesma interface, só trocar a string
-const URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent`;
+// Em ordem de preferência. Se o primeiro estiver sobrecarregado, cai para o próximo.
+const MODELOS = ["gemini-3.6-flash", "gemini-3.5-flash-lite"];
+const url = m => `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`;
+
+const espera = ms => new Promise(r => setTimeout(r, ms));
+const TRANSITORIO = new Set([429, 500, 502, 503, 504]);
 
 // GitHub Pages e Vercel são domínios diferentes: sem CORS o navegador bloqueia.
 const ORIGENS = [
@@ -41,31 +45,52 @@ export default async function handler(req, res) {
   );
   parts.push({ text: prompt });
 
-  try {
-    const r = await fetch(URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": process.env.GEMINI_API_KEY
-      },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: {
-          // temperature/top_p/top_k foram descontinuados em julho/2026: não enviar
-          responseMimeType: "application/json"   // dispensa recortar o JSON do texto
-        }
-      })
-    });
+  const corpo = JSON.stringify({
+    contents: [{ parts }],
+    generationConfig: {
+      // temperature/top_p/top_k foram descontinuados em julho/2026: não enviar
+      responseMimeType: "application/json"   // dispensa recortar o JSON do texto
+    }
+  });
 
-    const out = await r.json();
+  // Duas tentativas por modelo, com espera crescente, depois troca de modelo.
+  // Sobrecarga do Gemini é comum e quase sempre passa em segundos.
+  async function tentar() {
+    let ultimo = null;
+    for (const modelo of MODELOS) {
+      for (let i = 0; i < 2; i++) {
+        const r = await fetch(url(modelo), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": process.env.GEMINI_API_KEY
+          },
+          body: corpo
+        });
+        const out = await r.json();
+        if (r.ok) return { r, out, modelo };
+
+        ultimo = { r, out, modelo };
+        console.error("gemini", modelo, r.status, JSON.stringify(out).slice(0, 300));
+        if (!TRANSITORIO.has(r.status)) return ultimo;   // erro real: não insistir
+        if (i === 0) await espera(1200);                 // 1ª falha: espera e repete
+      }
+    }
+    return ultimo;
+  }
+
+  try {
+    const { r, out, modelo } = await tentar();
 
     if (!r.ok) {
-      console.error("gemini", r.status, JSON.stringify(out).slice(0, 500));
       const msg = r.status === 429
-        ? "limite diário de leituras atingido; tente amanhã ou preencha à mão"
-        : (out && out.error && out.error.message) || "erro na API do Gemini";
+        ? "limite de leituras atingido; tente daqui a pouco ou preencha à mão"
+        : TRANSITORIO.has(r.status)
+          ? "o serviço de leitura está sobrecarregado agora. Tente de novo em alguns segundos"
+          : (out && out.error && out.error.message) || "erro na API do Gemini";
       return res.status(r.status).json({ error: msg });
     }
+    if (modelo !== MODELOS[0]) console.warn("usou o modelo reserva:", modelo);
 
     const cand = out && out.candidates && out.candidates[0];
     const texto = (cand && cand.content && cand.content.parts || [])
