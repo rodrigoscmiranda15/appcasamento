@@ -470,7 +470,9 @@ function esqueleto(){
 }
 
 /* ---------- cálculo ---------- */
-const efetivo=b=>(+b.valor||0)+(b.adicionais||[]).reduce((a,x)=>a+(+x.valor||0),0);
+const qtdDe=b=>b.qtd||S.evento.convidados||0;
+const valAd=(x,b)=>x.pp?(+x.valor||0)*qtdDe(b):(+x.valor||0);
+const efetivo=b=>(+b.valor||0)+(b.adicionais||[]).reduce((a,x)=>a+valAd(x,b),0);
 const blocos=n=>n.blocos||[];
 const negsDe=c=>S.negs.filter(n=>blocos(n).some(b=>b.cat===c));
 const valorNa=(n,c)=>blocos(n).filter(b=>b.cat===c).reduce((a,b)=>a+efetivo(b),0);
@@ -538,7 +540,7 @@ function checar(n){
       if(f&&!(b.unit>=f[0]&&b.unit<=f[1]))
         o.push(["erro",`${brl2(b.unit)} por pessoa está fora do usual. Confira se digitou certo.`]);
     }
-    const ad=(b.adicionais||[]).filter(a=>a.valor>0).reduce((a,x)=>a+x.valor,0);
+    const ad=(b.adicionais||[]).filter(a=>a.valor>0).reduce((a,x)=>a+valAd(x,b),0);
     if(b.valor&&ad/b.valor>.15)
       o.push(["aviso",`Taxas e extras somam ${Math.round(ad/b.valor*100)}% além do preço anunciado.`]);
   });
@@ -756,9 +758,9 @@ function abrirCat(id){
             <div class="row"><span>${b.modo==="pp"
               ?`${brl2(b.unit)} × ${b.qtd} convidados`:"Valor anunciado"}</span>
               <span>${brl(b.valor)}</span></div>
-            ${(b.adicionais||[]).map(a=>`<div class="row row--add">
-              <span>${esc(a.rotulo)}</span>
-              <span>${a.valor<0?"−":"+"}${brl(Math.abs(a.valor))}</span></div>`).join("")}`).join("")}
+            ${(b.adicionais||[]).map(a=>{const v=valAd(a,b);return `<div class="row row--add">
+              <span>${esc(a.rotulo)}${a.pp?` · ${brl2(a.valor)} × ${qtdDe(b)}`:""}</span>
+              <span>${v<0?"−":"+"}${brl(Math.abs(v))}</span></div>`}).join("")}`).join("")}
           ${full!==tot?`<div class="row row--add"><span>Parte de outra categoria</span>
             <span>−${brl(full-tot)}</span></div>`:""}
           <div class="row row--sum"><span>Total real</span><span>${brl(tot)}</span></div>
@@ -953,7 +955,7 @@ Responda APENAS com JSON válido, sem markdown, sem crase, sem explicação.
 
 {"fornecedor":string|null,"categoria":string|null,"modo":"por_pessoa"|"total"|null,
 "valor_unitario":number|null,"quantidade":number|null,"valor_total":number|null,
-"adicionais":[{"rotulo":string,"valor":number}],"validade":"YYYY-MM-DD"|null,
+"adicionais":[{"rotulo":string,"valor":number,"por_pessoa":boolean}],"validade":"YYYY-MM-DD"|null,
 "validade_texto":string|null,"pagamento":string|null,"datas_parcela":["YYYY-MM-DD"],
 "observacao_negociacao":string|null,"ambiguidades":[string],"confianca":number}
 
@@ -968,6 +970,8 @@ BASE E ADICIONAIS:
 - NUNCA some imposto, frete, logística, equipe, taxa ou hora extra ao valor base.
   Cada um vira uma entrada em adicionais. Ex.: "ISS 5%", "Logística Petrópolis–Rio",
   "2 horas extras (10%)", "4h extras de equipe".
+- por_pessoa: true quando o adicional é cobrado por convidado (ex.: "R$ 10,00 por pessoa"),
+  false quando é valor fechado. Nesse caso grave o valor UNITÁRIO, sem multiplicar.
 - Desconto é adicional NEGATIVO. Cortesia entra com valor 0.
 - "12x de R$ 2.400" não é o total. "R$ 28.800,00" é 28800.00.
 - Se houver tabela de preço por ANO (ex.: 2026 R$ 240, 2027 R$ 275), use o preço do
@@ -1076,7 +1080,8 @@ function folha(neg,catPre){
   const totalAtual=()=>{
     const modo=$("f-modo")?.querySelector(".on")?.dataset.m;
     const v=+$("f-val")?.value||0,q=+$("f-qtd")?.value||0;
-    return (modo==="pp"?v*q:v)+adds.reduce((a,x)=>a+(+x.valor||0),0);
+    const qtd=modo==="pp"?q:(S.evento.convidados||0);
+    return (modo==="pp"?v*q:v)+adds.reduce((a,x)=>a+(x.pp?(+x.valor||0)*qtd:(+x.valor||0)),0);
   };
   const somaParc=()=>{const t=totalAtual();
     return parcs.reduce((a,p)=>a+(p.pct!=null&&p.pct!==""?t*(+p.pct)/100:(+p.valor||0)),0)};
@@ -1131,14 +1136,26 @@ function folha(neg,catPre){
   };
 
   const desenhaAdds=()=>{
+    const q=+($("f-qtd")?.value)||S.evento.convidados||0;
     $("f-adds").innerHTML=adds.map((a,i)=>`<div class="add-row">
-      <input type="text" value="${esc(a.rotulo)}" data-r="${i}" placeholder="ISS 5%" aria-label="Descrição">
+      <input type="text" value="${esc(a.rotulo)}" data-r="${i}" placeholder="Troca de cerveja" aria-label="Descrição">
       <input type="number" value="${a.valor||0}" data-v="${i}" step="0.01" aria-label="Valor">
-      <button type="button" data-x="${i}" aria-label="Remover">×</button></div>`).join("");
+      <button type="button" class="unit${a.pp?" unit--pct":""}" data-u="${i}"
+        aria-label="Alternar entre total e por pessoa">${a.pp?"/p":"R$"}</button>
+      <button type="button" data-x="${i}" aria-label="Remover">×</button>
+      ${a.pp&&a.valor?`<span class="parc-eq">${brl2(a.valor)} × ${q} = ${brl(a.valor*q)}</span>`:""}
+      </div>`).join("");
     $("f-adds").querySelectorAll("[data-r]").forEach(i=>
       i.addEventListener("input",e=>adds[+e.target.dataset.r].rotulo=e.target.value));
     $("f-adds").querySelectorAll("[data-v]").forEach(i=>
-      i.addEventListener("input",e=>adds[+e.target.dataset.v].valor=+e.target.value||0));
+      i.addEventListener("input",e=>{
+        adds[+e.target.dataset.v].valor=+e.target.value||0;
+        const l=e.target.parentElement.querySelector(".parc-eq");
+        if(l){const a=adds[+e.target.dataset.v],qq=+($("f-qtd")?.value)||S.evento.convidados||0;
+          l.textContent=`${brl2(a.valor)} × ${qq} = ${brl(a.valor*qq)}`;}
+      }));
+    $("f-adds").querySelectorAll("[data-u]").forEach(b=>
+      b.addEventListener("click",()=>{const a=adds[+b.dataset.u];a.pp=!a.pp;desenhaAdds();desenhaParcs()}));
     $("f-adds").querySelectorAll("[data-x]").forEach(b=>
       b.addEventListener("click",()=>{adds.splice(+b.dataset.x,1);desenhaAdds();desenhaParcs()}));
   };
@@ -1188,7 +1205,8 @@ function folha(neg,catPre){
     const modo=$("f-modo").querySelector(".on").dataset.m;
     const v=+$("f-val").value||0,q=+$("f-qtd").value||0;
     const bloco={cat:$("f-cat").value,modo,unit:modo==="pp"?v:null,qtd:modo==="pp"?q:null,
-      valor:modo==="pp"?v*q:v,adicionais:adds.filter(a=>a.rotulo||a.valor)};
+      valor:modo==="pp"?v*q:v,
+      adicionais:adds.filter(a=>a.rotulo||a.valor).map(a=>({rotulo:a.rotulo,valor:a.valor,pp:!!a.pp}))};
     const campos={forn,validade:$("f-val2").value||null,validadeTexto:$("f-valt").value||null,
       notas:$("f-notas").value||null,
       parcelas:parcs.filter(p=>p.data&&((p.pct!=null&&p.pct!=="")||p.valor))};
@@ -1322,7 +1340,7 @@ async function importar(entrada,redesenhar,setAdds,setParcs){
     $("f-val").value=pp?(d.valor_unitario??""):(d.valor_total??d.valor_unitario??"");
     if(pp&&d.quantidade)$("f-qtd").value=d.quantidade;
     if(Array.isArray(d.adicionais)&&d.adicionais.length){
-      setAdds(d.adicionais.map(x=>({rotulo:x.rotulo||"",valor:+x.valor||0})));redesenhar();
+      setAdds(d.adicionais.map(x=>({rotulo:x.rotulo||"",valor:+x.valor||0,pp:!!x.por_pessoa})));redesenhar();
     }
     if(d.validade)$("f-val2").value=d.validade;
     if(d.validade_texto)$("f-valt").value=d.validade_texto;
